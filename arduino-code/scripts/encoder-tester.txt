@@ -1,0 +1,47 @@
+#include <Arduino.h>
+#include <math.h>
+
+// -------------------- Pin definitions --------------------
+constexpr int PIN_CLK = 7;
+constexpr int PIN_DT  = 6;
+
+// -------------------- Encoder variables --------------------
+int lastCLK;
+long position = 0;
+
+// KY-040: typically 20 detents → 40 transitions per rev
+constexpr int STEPS_PER_REV = 40;
+
+void setup() {
+  pinMode(PIN_CLK, INPUT_PULLUP);
+  pinMode(PIN_DT, INPUT_PULLUP);
+
+  Serial.begin(9600);
+
+  lastCLK = digitalRead(PIN_CLK);
+
+  Serial.println("KY-040 Angle Reader Ready");
+}
+
+void loop() {
+  int currentCLK = digitalRead(PIN_CLK);
+
+  // Detect rotation
+  if (currentCLK != lastCLK) {
+    if (digitalRead(PIN_DT) != currentCLK) {
+      position++;   // clockwise
+    } else {
+      position--;   // counter-clockwise
+    }
+
+    // Convert position to angle and wrap to [0, 360)
+    float angle = fmod((position * 360.0f) / STEPS_PER_REV, 360.0f);
+    if (angle < 0) angle += 360.0f;
+
+    Serial.print("Angle: ");
+    Serial.print(angle, 2);
+    Serial.println(" deg");
+  }
+
+  lastCLK = currentCLK;
+}
