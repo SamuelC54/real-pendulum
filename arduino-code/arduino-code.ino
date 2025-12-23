@@ -5,53 +5,29 @@ constexpr int DIR_PIN    = 2;
 constexpr int STEP_PIN   = 3;
 constexpr int ENABLE_PIN = 8;
 
-constexpr int SWITCH_HOME_PIN = 5; // Home switch (switch 1)
-constexpr int SWITCH_END_PIN  = 6; // End switch  (switch 2)
-
-// -------------------- Stepper setup --------------------
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
-// DRV8825 microstepping (1,2,4,8,16,32)
-constexpr int MICROSTEPS = 16;
+// -------------------- Manual tuning --------------------
+// For NEMA 23 + DRV8825 at 1/8 microstepping (1600 steps/rev)
+// Install jumpers on M0 and M1 (M2 open)
+constexpr float MANUAL_SPEED = 4000;   // steps/sec (~150 RPM)
+constexpr float MANUAL_ACCEL = 8000;   // steps/sec^2
 
-// NEMA23: 1.8° = 200 full steps per revolution
-constexpr long FULL_STEPS_PER_REV = 200;
-constexpr long STEPS_PER_REV = FULL_STEPS_PER_REV * MICROSTEPS;
+// Each key press moves this many steps
+constexpr long MANUAL_STEP = 800;      // 1/2 revolution at 1/8 microstepping
 
-// -------------------- Speeds --------------------
-constexpr float HOMING_SPEED = 150;     // slow speed for homing
-constexpr float HOMING_ACCEL = 100;
+// Optional software limits (disable by setting USE_SOFT_LIMITS=false)
+constexpr bool USE_SOFT_LIMITS = false;
+constexpr long MIN_POS = 0;
+constexpr long MAX_POS = 20000;
 
-constexpr float NORMAL_SPEED = 400;
-constexpr float NORMAL_ACCEL = 200;
-
-// After centering: fast small back-and-forth
-constexpr float JIGGLE_SPEED = 2000;    // fast
-constexpr float JIGGLE_ACCEL = 4000;    // snappy accel
-constexpr long  JIGGLE_AMPLITUDE_STEPS = 400; // adjust: +/- steps around center
-
-// -------------------- State machine --------------------
-enum HomingState {
-  MOVE_TO_HOME,
-  MOVE_TO_END,
-  MOVE_TO_CENTER,
-  JIGGLE
-};
-
-HomingState state = MOVE_TO_HOME;
-
-// Stores total travel distance between switches
-long totalTravelSteps = 0;
-long centerPosition = 0;
-
-// Jiggle direction toggle
-bool jiggleToPositive = true;
+static long clampLong(long v, long lo, long hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
 
 void setup() {
-  // Switches use INPUT_PULLUP (pressed = LOW)
-  pinMode(SWITCH_HOME_PIN, INPUT_PULLUP);
-  pinMode(SWITCH_END_PIN, INPUT_PULLUP);
-
   pinMode(ENABLE_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, LOW); // Enable DRV8825
 
@@ -59,80 +35,31 @@ void setup() {
   stepper.setPinsInverted(false, false, true);
   stepper.enableOutputs();
 
-  // Start with homing speed
-  stepper.setMaxSpeed(HOMING_SPEED);
-  stepper.setAcceleration(HOMING_ACCEL);
+  stepper.setMaxSpeed(MANUAL_SPEED);
+  stepper.setAcceleration(MANUAL_ACCEL);
 
-  // Move toward the home switch (negative direction assumed)
-  stepper.moveTo(-1000000); // large number to guarantee reaching the switch
+  Serial.begin(115200);
+  Serial.println("Manual mode: send 'L' or 'R' (and 'S' to stop).");
 }
 
 void loop() {
   stepper.run();
 
-  switch (state) {
+  if (Serial.available() > 0) {
+    char c = (char)Serial.read();
 
-    // -------------------- Step 1: Find home switch --------------------
-    case MOVE_TO_HOME:
-      if (digitalRead(SWITCH_HOME_PIN) == LOW) {
-        stepper.stop();
-        stepper.setCurrentPosition(0); // Home position = 0
-
-        // Prepare to move toward end switch
-        stepper.setMaxSpeed(HOMING_SPEED);
-        stepper.setAcceleration(HOMING_ACCEL);
-        stepper.moveTo(1000000); // large positive move
-
-        state = MOVE_TO_END;
-      }
-      break;
-
-    // -------------------- Step 2: Find end switch --------------------
-    case MOVE_TO_END:
-      if (digitalRead(SWITCH_END_PIN) == LOW) {
-        stepper.stop();
-
-        // Save total travel distance (position when end switch hit)
-        totalTravelSteps = stepper.currentPosition();
-
-        // Compute and move to center
-        centerPosition = totalTravelSteps / 2;
-
-        stepper.setMaxSpeed(NORMAL_SPEED);
-        stepper.setAcceleration(NORMAL_ACCEL);
-        stepper.moveTo(centerPosition);
-
-        state = MOVE_TO_CENTER;
-      }
-      break;
-
-    // -------------------- Step 3: Go to center --------------------
-    case MOVE_TO_CENTER:
-      if (stepper.distanceToGo() == 0) {
-        // Switch to jiggle motion
-        stepper.setMaxSpeed(JIGGLE_SPEED);
-        stepper.setAcceleration(JIGGLE_ACCEL);
-
-        // Start by going slightly negative (or positive, your choice)
-        jiggleToPositive = true;
-        stepper.moveTo(centerPosition + JIGGLE_AMPLITUDE_STEPS);
-
-        state = JIGGLE;
-      }
-      break;
-
-    // -------------------- Step 4: Fast back and forth around center --------------------
-    case JIGGLE:
-      // When we reached the target, flip to the other side
-      if (stepper.distanceToGo() == 0) {
-        jiggleToPositive = !jiggleToPositive;
-
-        long target = jiggleToPositive
-          ? (centerPosition + JIGGLE_AMPLITUDE_STEPS)
-          : (centerPosition - JIGGLE_AMPLITUDE_STEPS);
-
-        stepper.moveTo(target);
-      }
-      break;
+    if (c == 'L') {
+      long target = stepper.currentPosition() - MANUAL_STEP;
+      if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
+      stepper.moveTo(target);
+    }
+    else if (c == 'R') {
+      long target = stepper.currentPosition() + MANUAL_STEP;
+      if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
+      stepper.moveTo(target);
+    }
+    else if (c == 'S') {
+      stepper.stop(); // decelerates to stop
+    }
   }
 }
