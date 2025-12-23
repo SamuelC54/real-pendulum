@@ -7,14 +7,20 @@ BAUD = 115200
 
 ser = serial.Serial(PORT, BAUD, timeout=0.1)
 
-print("Arrow keys: LEFT/RIGHT. ESC quits.")
+print("Controls:")
+print("  LEFT/RIGHT arrows = move left/right")
+print("  UP arrow (hold)   = oscillate back and forth")
+print("  ESC               = stop and quit")
 
 left_was_pressed = False
 right_was_pressed = False
+up_was_pressed = False
+up_is_held = False
 
 while True:
     left_pressed = keyboard.is_pressed("left")
     right_pressed = keyboard.is_pressed("right")
+    up_pressed = keyboard.is_pressed("up")
     
     # Send L only on key down (not while held)
     if left_pressed and not left_was_pressed:
@@ -24,8 +30,18 @@ while True:
     if right_pressed and not right_was_pressed:
         ser.write(b"R")
     
+    # UP arrow: start oscillation when pressed, stop when released
+    if up_pressed and not up_was_pressed:
+        ser.write(b"O")
+        up_is_held = True
+    
+    if not up_pressed and up_was_pressed and up_is_held:
+        ser.write(b"S")
+        up_is_held = False
+    
     left_was_pressed = left_pressed
     right_was_pressed = right_pressed
+    up_was_pressed = up_pressed
     
     if keyboard.is_pressed("esc"):
         ser.write(b"S")
