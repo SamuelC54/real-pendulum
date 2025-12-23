@@ -8,18 +8,18 @@ constexpr int ENABLE_PIN = 8;
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 // -------------------- Manual tuning --------------------
-// For NEMA 23 + DRV8825 at 1/4 microstepping (800 steps/rev)
-// Install jumper on M1 only (M0 and M2 open) — 2x faster than 1/8
+// For NEMA 23 + DRV8825 at FULL STEP (200 steps/rev)
+// NO JUMPERS on M0, M1, M2 — maximum speed!
 constexpr float MANUAL_SPEED = 6000;     // steps/sec (~225 RPM)
 constexpr float MANUAL_ACCEL = 10000;    // steps/sec^2
 
 // Each key press moves this many steps
-constexpr long MANUAL_STEP = 800;        // 1 full revolution at 1/4 microstepping
+constexpr long MANUAL_STEP = 200;        // 1 full revolution at full step
 
 // Oscillation base settings
 constexpr float OSCILLATE_BASE_SPEED = 2000;   // start slower so doubling works
 constexpr float OSCILLATE_BASE_ACCEL = 4000;
-constexpr long OSCILLATE_STEP = 2400;          // 3 revolutions each way at 1/4 microstepping
+constexpr long OSCILLATE_STEP = 600;           // 3 revolutions each way at full step
 constexpr float MAX_SPEED = 10000;             // AccelStepper practical limit on Uno
 
 // Disable motor after idle for this many ms (saves power, stops pulsing)
