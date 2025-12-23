@@ -10,17 +10,20 @@ ser = serial.Serial(PORT, BAUD, timeout=0.1)
 print("Controls:")
 print("  LEFT/RIGHT arrows = move left/right")
 print("  UP arrow (hold)   = oscillate back and forth")
+print("  P                 = double oscillation speed")
 print("  ESC               = stop and quit")
 
 left_was_pressed = False
 right_was_pressed = False
 up_was_pressed = False
+p_was_pressed = False
 up_is_held = False
 
 while True:
     left_pressed = keyboard.is_pressed("left")
     right_pressed = keyboard.is_pressed("right")
     up_pressed = keyboard.is_pressed("up")
+    p_pressed = keyboard.is_pressed("p")
     
     # Send L only on key down (not while held)
     if left_pressed and not left_was_pressed:
@@ -39,9 +42,15 @@ while True:
         ser.write(b"S")
         up_is_held = False
     
+    # P key: double speed (only on key down)
+    if p_pressed and not p_was_pressed:
+        ser.write(b"P")
+        print("Speed doubled!")
+    
     left_was_pressed = left_pressed
     right_was_pressed = right_pressed
     up_was_pressed = up_pressed
+    p_was_pressed = p_pressed
     
     if keyboard.is_pressed("esc"):
         ser.write(b"S")
