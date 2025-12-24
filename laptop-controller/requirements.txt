@@ -1,5 +1,6 @@
 pyserial
 keyboard
+watchdog
 
 
 
