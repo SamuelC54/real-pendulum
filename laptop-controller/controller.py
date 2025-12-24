@@ -14,6 +14,7 @@ ser = serial.Serial(PORT, BAUD, timeout=0.1)
 print("Controls:")
 print("  LEFT/RIGHT arrows = move left/right")
 print("  UP arrow (hold)   = oscillate back and forth")
+print("  DOWN arrow (hold) = swing-up mode (pump energy)")
 print("  P                 = double oscillation speed")
 print("  A                 = read angle from encoder")
 print("  U                 = upload Arduino code (uses arduino-cli)")
@@ -23,15 +24,18 @@ print()
 left_was_pressed = False
 right_was_pressed = False
 up_was_pressed = False
+down_was_pressed = False
 p_was_pressed = False
 a_was_pressed = False
 u_was_pressed = False
 up_is_held = False
+down_is_held = False
 
 while True:
     left_pressed = keyboard.is_pressed("left")
     right_pressed = keyboard.is_pressed("right")
     up_pressed = keyboard.is_pressed("up")
+    down_pressed = keyboard.is_pressed("down")
     p_pressed = keyboard.is_pressed("p")
     a_pressed = keyboard.is_pressed("a")
     u_pressed = keyboard.is_pressed("u")
@@ -52,6 +56,15 @@ while True:
     if not up_pressed and up_was_pressed and up_is_held:
         ser.write(b"S")
         up_is_held = False
+    
+    # DOWN arrow: start swing-up when pressed, stop when released
+    if down_pressed and not down_was_pressed:
+        ser.write(b"W")
+        down_is_held = True
+    
+    if not down_pressed and down_was_pressed and down_is_held:
+        ser.write(b"S")
+        down_is_held = False
     
     # P key: double speed (only on key down)
     if p_pressed and not p_was_pressed:
@@ -87,6 +100,7 @@ while True:
     left_was_pressed = left_pressed
     right_was_pressed = right_pressed
     up_was_pressed = up_pressed
+    down_was_pressed = down_pressed
     p_was_pressed = p_pressed
     a_was_pressed = a_pressed
     u_was_pressed = u_pressed

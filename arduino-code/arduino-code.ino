@@ -61,6 +61,29 @@ int lastCLK;
 long encoderPosition = 0;
 float currentAngle = 0.0f;
 
+// Swing-up state
+bool swingUpMode = false;
+float previousAngle = 0.0f;
+unsigned long lastSwingUpTime = 0;
+long swingUpCenter = 0;  // Cart position when swing-up started
+constexpr unsigned long SWINGUP_INTERVAL_MS = 10;  // Control loop interval
+constexpr float SWINGUP_SPEED = 8000;             // Fast cart movement
+constexpr float SWINGUP_ACCEL = 8000;              // High acceleration
+constexpr long SWINGUP_STEP = 800;                 // Movement step size
+constexpr float VELOCITY_THRESHOLD = 0.5f;         // Lower threshold to catch more motion
+
+// Centering: bias pumping toward center position
+// When pump direction matches centering direction, pump harder (1 + GAIN)
+// When pump direction opposes centering, pump less (1 - GAIN)
+constexpr float CENTERING_GAIN = 0.3f;  // 0 = no centering, 0.5 = strong centering
+
+// Angle where pendulum hangs down (adjust if your encoder zero is different)
+constexpr float ANGLE_DOWN = 0.0f;    // 0° = hanging down
+constexpr float ANGLE_UP = 180.0f;    // 180° = inverted (goal)
+
+// Set to -1 if pendulum stalls or goes wrong direction
+constexpr int SWINGUP_DIRECTION = 1;  // 1 or -1 to invert pumping direction
+
 static long clampLong(long v, long lo, long hi) {
   if (v < lo) return lo;
   if (v > hi) return hi;
@@ -146,6 +169,7 @@ bool checkLimits() {
     stepper.stop();
     stepper.setCurrentPosition(stepper.currentPosition());  // Clear target
     oscillating = false;
+    swingUpMode = false;
     
     if (leftHit) {
       Serial.println("LIMIT: Left switch hit!");
@@ -188,7 +212,7 @@ void setup() {
   // Flush any garbage in serial buffer
   while (Serial.available()) Serial.read();
   
-  Serial.println("Commands: L=left, R=right, O=oscillate, P=speed up, A=angle, S=stop");
+  Serial.println("Commands: L=left, R=right, O=oscillate, W=swing-up, P=speed up, A=angle, S=stop");
   lastMoveTime = millis();
 }
 
@@ -210,8 +234,73 @@ void loop() {
     lastMoveTime = millis();
   }
 
-  // Disable motor after idle timeout (only when not oscillating)
-  if (!oscillating && stepper.distanceToGo() == 0) {
+  // Handle swing-up mode - pump energy using energy-based control
+  if (swingUpMode && (millis() - lastSwingUpTime >= SWINGUP_INTERVAL_MS)) {
+    // Calculate angular velocity (degrees per interval)
+    float angularVelocity = currentAngle - previousAngle;
+    
+    // Handle wrap-around (e.g., 359° -> 1° should be +2°, not -358°)
+    if (angularVelocity > 180.0f) angularVelocity -= 360.0f;
+    if (angularVelocity < -180.0f) angularVelocity += 360.0f;
+    
+    // Only pump if velocity is significant
+    if (fabs(angularVelocity) > VELOCITY_THRESHOLD) {
+      // Energy-based swing-up: use cos(angle) * velocity
+      // cos(angle) is positive near bottom (0°), negative near top (180°)
+      float angleRad = currentAngle * (3.14159f / 180.0f);
+      float cosAngle = cos(angleRad);
+      
+      // Energy pumping term
+      float pumpDirection = cosAngle * angularVelocity * SWINGUP_DIRECTION;
+      
+      // Calculate drift from center for centering correction
+      long currentPos = stepper.currentPosition();
+      long drift = currentPos - swingUpCenter;
+      
+      // Bias pumping toward center: if we need to go left AND we're right of center, pump harder
+      // If we need to go left BUT we're left of center, pump less
+      long pumpStep = SWINGUP_STEP;
+      
+      // Adjust pump step based on whether pump direction helps centering
+      if (pumpDirection > 0) {
+        // Want to move right
+        if (drift > 0) {
+          // Already right of center, pump less
+          pumpStep = (long)(SWINGUP_STEP * (1.0f - CENTERING_GAIN));
+        } else {
+          // Left of center, pump more (helps centering)
+          pumpStep = (long)(SWINGUP_STEP * (1.0f + CENTERING_GAIN));
+        }
+      } else {
+        // Want to move left
+        if (drift < 0) {
+          // Already left of center, pump less
+          pumpStep = (long)(SWINGUP_STEP * (1.0f - CENTERING_GAIN));
+        } else {
+          // Right of center, pump more (helps centering)
+          pumpStep = (long)(SWINGUP_STEP * (1.0f + CENTERING_GAIN));
+        }
+      }
+      
+      long target = currentPos;
+      
+      // Move cart to pump energy
+      if (pumpDirection > 0 && canMoveRight()) {
+        target += pumpStep;
+      } else if (pumpDirection < 0 && canMoveLeft()) {
+        target -= pumpStep;
+      }
+      
+      stepper.moveTo(target);
+      lastMoveTime = millis();
+    }
+    
+    previousAngle = currentAngle;
+    lastSwingUpTime = millis();
+  }
+
+  // Disable motor after idle timeout (only when not oscillating or swing-up)
+  if (!oscillating && !swingUpMode && stepper.distanceToGo() == 0) {
     if (motorEnabled && (millis() - lastMoveTime > IDLE_TIMEOUT_MS)) {
       disableMotor();
     }
@@ -225,6 +314,7 @@ void loop() {
         Serial.println("Blocked: left limit");
       } else {
         oscillating = false;
+        swingUpMode = false;
         stepper.setMaxSpeed(MANUAL_SPEED);
         stepper.setAcceleration(MANUAL_ACCEL);
         enableMotor();
@@ -239,6 +329,7 @@ void loop() {
         Serial.println("Blocked: right limit");
       } else {
         oscillating = false;
+        swingUpMode = false;
         stepper.setMaxSpeed(MANUAL_SPEED);
         stepper.setAcceleration(MANUAL_ACCEL);
         enableMotor();
@@ -254,6 +345,7 @@ void loop() {
         Serial.println("Cannot oscillate: at limit switch");
       } else {
         // Start oscillation (reset speed level)
+        swingUpMode = false;
         speedLevel = 0;
         updateOscillateSpeed();
         enableMotor();
@@ -266,6 +358,18 @@ void loop() {
         lastMoveTime = millis();
         Serial.println("Oscillating...");
       }
+    }
+    else if (c == 'W') {
+      // Start swing-up mode
+      oscillating = false;
+      swingUpMode = true;
+      swingUpCenter = stepper.currentPosition();  // Remember center position
+      previousAngle = currentAngle;
+      lastSwingUpTime = millis();
+      enableMotor();
+      stepper.setMaxSpeed(SWINGUP_SPEED);
+      stepper.setAcceleration(SWINGUP_ACCEL);
+      Serial.println("Swing-up mode: pumping energy...");
     }
     else if (c == 'P') {
       // Double the speed
@@ -281,6 +385,7 @@ void loop() {
     }
     else if (c == 'S') {
       oscillating = false;
+      swingUpMode = false;
       speedLevel = 0;
       stepper.setMaxSpeed(MANUAL_SPEED);
       stepper.setAcceleration(MANUAL_ACCEL);
