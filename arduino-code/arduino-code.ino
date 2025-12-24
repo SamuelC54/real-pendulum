@@ -17,20 +17,21 @@ constexpr int LIMIT_RIGHT_PIN = 5;   // Right end of rail
 
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
-// -------------------- Manual tuning --------------------
-// For NEMA 23 + DRV8825 at FULL STEP (200 steps/rev)
-// NO JUMPERS on M0, M1, M2 — maximum speed!
-constexpr float MANUAL_SPEED = 6000;     // steps/sec (~225 RPM)
-constexpr float MANUAL_ACCEL = 10000;    // steps/sec^2
+// -------------------- Motor tuning (configurable via serial) --------------------
+// These are default values, can be changed at runtime via web UI
+float manualSpeed = 6000;       // steps/sec
+float manualAccel = 10000;      // steps/sec^2
+long manualStep = 200;          // steps per button press
 
-// Each key press moves this many steps
-constexpr long MANUAL_STEP = 200;        // 1 full revolution at full step
+float oscillateSpeed = 2000;    // oscillation speed
+float oscillateAccel = 4000;    // oscillation acceleration
+long oscillateStep = 600;       // oscillation amplitude (steps)
 
-// Oscillation base settings
-constexpr float OSCILLATE_BASE_SPEED = 2000;   // start slower so doubling works
-constexpr float OSCILLATE_BASE_ACCEL = 4000;
-constexpr long OSCILLATE_STEP = 600;           // 3 revolutions each way at full step
-constexpr float MAX_SPEED = 10000;             // AccelStepper practical limit on Uno
+float swingupSpeed = 10000;     // swing-up max speed
+float swingupAccel = 6000;      // swing-up acceleration
+float swingupKp = 20.0f;        // swing-up proportional gain
+
+constexpr float MAX_SPEED = 16000;  // AccelStepper practical limit
 
 // Disable motor after idle for this many ms (saves power, stops pulsing)
 constexpr unsigned long IDLE_TIMEOUT_MS = 500;
@@ -53,8 +54,8 @@ long oscillateCenter = 0;
 
 // Speed multiplier - doubles with each 'P' press
 int speedLevel = 0;  // 0 = 1x, 1 = 2x, 2 = 4x, etc.
-float currentOscillateSpeed = OSCILLATE_BASE_SPEED;
-float currentOscillateAccel = OSCILLATE_BASE_ACCEL;
+float currentOscillateSpeed = oscillateSpeed;
+float currentOscillateAccel = oscillateAccel;
 
 // Encoder state
 int lastCLK;
@@ -69,13 +70,13 @@ long swingUpCenter = 0;  // Cart position when swing-up started
 constexpr unsigned long SWINGUP_INTERVAL_MS = 50;  // Control loop interval (50ms for encoder resolution)
 unsigned long lastDebugTime = 0;  // For debug output
 
-// PD Control parameters for swing-up
-constexpr float SWINGUP_SPEED = 10000;             // Max cart speed
-constexpr float SWINGUP_ACCEL = 6000;              // Cart acceleration
-constexpr float KP_SWINGUP = 20.0f;                // Proportional gain (cart steps per pump signal unit)
-constexpr float KD_SWINGUP = 0.0f;                 // Derivative gain (start with 0, add later if needed)
-constexpr float KC_SWINGUP = 0.0f;                 // Centering gain (start with 0)
+// PD Control parameters for swing-up (Kp is configurable, others fixed for now)
+constexpr float KD_SWINGUP = 0.0f;                 // Derivative gain
+constexpr float KC_SWINGUP = 0.0f;                 // Centering gain
 constexpr long MAX_CART_OFFSET = 3000;             // Maximum cart offset from center (steps)
+
+// Serial input buffer for configuration commands
+String serialBuffer = "";
 
 // Angle where pendulum hangs down (adjust if your encoder zero is different)
 constexpr float ANGLE_DOWN = 0.0f;    // 0° = hanging down
@@ -106,8 +107,8 @@ void disableMotor() {
 
 void updateOscillateSpeed() {
   float multiplier = (float)(1 << speedLevel);  // 2^speedLevel
-  currentOscillateSpeed = OSCILLATE_BASE_SPEED * multiplier;
-  currentOscillateAccel = OSCILLATE_BASE_ACCEL * multiplier;
+  currentOscillateSpeed = oscillateSpeed * multiplier;
+  currentOscillateAccel = oscillateAccel * multiplier;
   
   // Cap at practical AccelStepper limit
   if (currentOscillateSpeed > MAX_SPEED) currentOscillateSpeed = MAX_SPEED;
@@ -117,7 +118,7 @@ void updateOscillateSpeed() {
     stepper.setMaxSpeed(currentOscillateSpeed);
     stepper.setAcceleration(currentOscillateAccel);
     // Re-issue move command to apply new speed immediately
-    long target = oscillateCenter + (oscillateDirection * OSCILLATE_STEP);
+    long target = oscillateCenter + (oscillateDirection * oscillateStep);
     stepper.moveTo(target);
   }
   
@@ -196,8 +197,8 @@ void setup() {
   pinMode(ENABLE_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, LOW);  // Enable DRV8825 (active LOW)
 
-  stepper.setMaxSpeed(MANUAL_SPEED);
-  stepper.setAcceleration(MANUAL_ACCEL);
+  stepper.setMaxSpeed(manualSpeed);
+  stepper.setAcceleration(manualAccel);
 
   // Encoder setup
   pinMode(PIN_CLK, INPUT_PULLUP);
@@ -229,7 +230,7 @@ void loop() {
   if (oscillating && stepper.distanceToGo() == 0) {
     // Reached target, reverse direction
     oscillateDirection *= -1;
-    long target = oscillateCenter + (oscillateDirection * OSCILLATE_STEP);
+    long target = oscillateCenter + (oscillateDirection * oscillateStep);
     stepper.moveTo(target);
     lastMoveTime = millis();
   }
@@ -263,7 +264,7 @@ void loop() {
     // D (derivative): Damping based on angular acceleration (smooths response)
     // C (centering): Pull cart back toward starting position
     
-    float pTerm = KP_SWINGUP * pumpSignal;                    // Proportional to pump signal
+    float pTerm = swingupKp * pumpSignal;                    // Proportional to pump signal
     float dTerm = -KD_SWINGUP * angularVelocityPerSec;        // Damping (opposes fast swings)
     float cTerm = -KC_SWINGUP * (float)drift;                 // Centering force
     
@@ -313,19 +314,52 @@ void loop() {
     }
   }
 
-  if (Serial.available() > 0) {
+  // Read serial commands
+  while (Serial.available() > 0) {
     char c = (char)Serial.read();
+    
+    // If newline, process buffer
+    if (c == '\n' || c == '\r') {
+      if (serialBuffer.length() > 0) {
+        processCommand(serialBuffer);
+        serialBuffer = "";
+      }
+    }
+    // Single character commands (immediate)
+    else if (serialBuffer.length() == 0 && 
+             (c == 'L' || c == 'R' || c == 'O' || c == 'W' || c == 'P' || c == 'A' || c == 'S' || c == '?')) {
+      processCommand(String(c));
+    }
+    // Multi-character command (buffer until newline)
+    else {
+      serialBuffer += c;
+      // Safety: limit buffer size
+      if (serialBuffer.length() > 20) {
+        serialBuffer = "";
+      }
+    }
+  }
+}
 
+// Process a command string
+void processCommand(String cmd) {
+  cmd.trim();
+  if (cmd.length() == 0) return;
+  
+  char c = cmd.charAt(0);
+  
+  // Single character commands
+  if (cmd.length() == 1) {
     if (c == 'L') {
       if (!canMoveLeft()) {
         Serial.println("Blocked: left limit");
       } else {
         oscillating = false;
         swingUpMode = false;
-        stepper.setMaxSpeed(MANUAL_SPEED);
-        stepper.setAcceleration(MANUAL_ACCEL);
+        stepper.setMaxSpeed(manualSpeed);
+        stepper.setAcceleration(manualAccel);
         enableMotor();
-        long target = stepper.currentPosition() - MANUAL_STEP;
+        long target = stepper.currentPosition() - manualStep;
         if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
         stepper.moveTo(target);
         lastMoveTime = millis();
@@ -337,21 +371,19 @@ void loop() {
       } else {
         oscillating = false;
         swingUpMode = false;
-        stepper.setMaxSpeed(MANUAL_SPEED);
-        stepper.setAcceleration(MANUAL_ACCEL);
+        stepper.setMaxSpeed(manualSpeed);
+        stepper.setAcceleration(manualAccel);
         enableMotor();
-        long target = stepper.currentPosition() + MANUAL_STEP;
+        long target = stepper.currentPosition() + manualStep;
         if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
         stepper.moveTo(target);
         lastMoveTime = millis();
       }
     }
     else if (c == 'O') {
-      // Check if we can oscillate (not at a limit)
       if (!canMoveLeft() || !canMoveRight()) {
         Serial.println("Cannot oscillate: at limit switch");
       } else {
-        // Start oscillation (reset speed level)
         swingUpMode = false;
         speedLevel = 0;
         updateOscillateSpeed();
@@ -361,31 +393,28 @@ void loop() {
         oscillateDirection = 1;
         stepper.setMaxSpeed(currentOscillateSpeed);
         stepper.setAcceleration(currentOscillateAccel);
-        stepper.moveTo(oscillateCenter + OSCILLATE_STEP);
+        stepper.moveTo(oscillateCenter + oscillateStep);
         lastMoveTime = millis();
         Serial.println("Oscillating...");
       }
     }
     else if (c == 'W') {
-      // Start swing-up mode
       oscillating = false;
       swingUpMode = true;
-      swingUpCenter = stepper.currentPosition();  // Remember center position
+      swingUpCenter = stepper.currentPosition();
       previousAngle = currentAngle;
       lastSwingUpTime = millis();
       enableMotor();
-      stepper.setMaxSpeed(SWINGUP_SPEED);
-      stepper.setAcceleration(SWINGUP_ACCEL);
+      stepper.setMaxSpeed(swingupSpeed);
+      stepper.setAcceleration(swingupAccel);
       Serial.println("Swing-up mode: pumping energy...");
     }
     else if (c == 'P') {
-      // Double the speed
       speedLevel++;
-      if (speedLevel > 5) speedLevel = 5;  // Cap at 32x to prevent insane speeds
+      if (speedLevel > 5) speedLevel = 5;
       updateOscillateSpeed();
     }
     else if (c == 'A') {
-      // Print current angle
       Serial.print("Angle: ");
       Serial.print(currentAngle, 2);
       Serial.println(" deg");
@@ -394,10 +423,75 @@ void loop() {
       oscillating = false;
       swingUpMode = false;
       speedLevel = 0;
-      stepper.setMaxSpeed(MANUAL_SPEED);
-      stepper.setAcceleration(MANUAL_ACCEL);
+      stepper.setMaxSpeed(manualSpeed);
+      stepper.setAcceleration(manualAccel);
       stepper.stop();
       Serial.println("Stopped");
     }
+    else if (c == '?') {
+      // Print current settings
+      printSettings();
+    }
   }
+  // Configuration commands: XX:value
+  else if (cmd.length() > 3 && cmd.charAt(2) == ':') {
+    String prefix = cmd.substring(0, 2);
+    float value = cmd.substring(3).toFloat();
+    
+    if (prefix == "MS") {
+      manualSpeed = constrain(value, 100, MAX_SPEED);
+      Serial.print("Manual Speed: "); Serial.println(manualSpeed);
+    }
+    else if (prefix == "MA") {
+      manualAccel = constrain(value, 100, 20000);
+      Serial.print("Manual Accel: "); Serial.println(manualAccel);
+    }
+    else if (prefix == "MT") {
+      manualStep = constrain((long)value, 10, 5000);
+      Serial.print("Manual Step: "); Serial.println(manualStep);
+    }
+    else if (prefix == "OS") {
+      oscillateSpeed = constrain(value, 100, MAX_SPEED);
+      currentOscillateSpeed = oscillateSpeed;
+      Serial.print("Oscillate Speed: "); Serial.println(oscillateSpeed);
+    }
+    else if (prefix == "OA") {
+      oscillateAccel = constrain(value, 100, 20000);
+      currentOscillateAccel = oscillateAccel;
+      Serial.print("Oscillate Accel: "); Serial.println(oscillateAccel);
+    }
+    else if (prefix == "OT") {
+      oscillateStep = constrain((long)value, 50, 5000);
+      Serial.print("Oscillate Step: "); Serial.println(oscillateStep);
+    }
+    else if (prefix == "WS") {
+      swingupSpeed = constrain(value, 100, MAX_SPEED);
+      Serial.print("Swingup Speed: "); Serial.println(swingupSpeed);
+    }
+    else if (prefix == "WA") {
+      swingupAccel = constrain(value, 100, 20000);
+      Serial.print("Swingup Accel: "); Serial.println(swingupAccel);
+    }
+    else if (prefix == "WK") {
+      swingupKp = constrain(value, 1, 200);
+      Serial.print("Swingup Kp: "); Serial.println(swingupKp);
+    }
+    else {
+      Serial.print("Unknown config: "); Serial.println(prefix);
+    }
+  }
+}
+
+// Print all current settings
+void printSettings() {
+  Serial.println("=== Current Settings ===");
+  Serial.print("Manual:    speed="); Serial.print(manualSpeed);
+  Serial.print(" accel="); Serial.print(manualAccel);
+  Serial.print(" step="); Serial.println(manualStep);
+  Serial.print("Oscillate: speed="); Serial.print(oscillateSpeed);
+  Serial.print(" accel="); Serial.print(oscillateAccel);
+  Serial.print(" step="); Serial.println(oscillateStep);
+  Serial.print("Swingup:   speed="); Serial.print(swingupSpeed);
+  Serial.print(" accel="); Serial.print(swingupAccel);
+  Serial.print(" Kp="); Serial.println(swingupKp);
 }

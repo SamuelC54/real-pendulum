@@ -135,6 +135,36 @@ function sendCommand(cmd: string) {
   }
 }
 
+// Upload button handling
+const uploadBtn = document.getElementById('btn-upload');
+const uploadStatus = document.getElementById('upload-status');
+
+function showUploadStatus(message: string, type: 'uploading' | 'success' | 'error') {
+  if (uploadStatus) {
+    uploadStatus.textContent = message;
+    uploadStatus.className = 'visible ' + type;
+    
+    // Auto-hide success/error after 5 seconds
+    if (type !== 'uploading') {
+      setTimeout(() => {
+        uploadStatus.classList.remove('visible');
+      }, 5000);
+    }
+  }
+}
+
+if (uploadBtn) {
+  uploadBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      uploadBtn.classList.add('uploading');
+      showUploadStatus('Uploading... please wait', 'uploading');
+      ws.send(JSON.stringify({ command: 'UPLOAD' }));
+    } else {
+      showUploadStatus('Not connected to controller', 'error');
+    }
+  });
+}
+
 function connect() {
   statusEl.textContent = 'Connecting...';
   statusEl.classList.remove('connected');
@@ -151,6 +181,22 @@ function connect() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        
+        // Handle upload status messages
+        if (data.upload_status !== undefined) {
+          const uploadBtn = document.getElementById('btn-upload');
+          if (uploadBtn) uploadBtn.classList.remove('uploading');
+          
+          if (data.upload_status === 'success') {
+            showUploadStatus('✓ Upload successful!', 'success');
+          } else if (data.upload_status === 'error') {
+            showUploadStatus('✗ Upload failed: ' + (data.message || 'Unknown error'), 'error');
+          } else if (data.upload_status === 'started') {
+            showUploadStatus('Compiling and uploading...', 'uploading');
+          }
+        }
+        
+        // Handle angle data
         if (data.angle !== undefined) {
           previousAngle = currentAngle;
           currentAngle = data.angle;
@@ -254,6 +300,31 @@ function setupControls() {
   });
 }
 
+// Setup configuration sliders
+function setupConfigSliders() {
+  document.querySelectorAll('input[type="range"][data-cfg]').forEach(slider => {
+    const input = slider as HTMLInputElement;
+    const cfgKey = input.getAttribute('data-cfg');
+    const valueDisplay = document.getElementById('val-' + input.id.replace('cfg-', ''));
+    
+    // Update display on input
+    input.addEventListener('input', () => {
+      if (valueDisplay) {
+        valueDisplay.textContent = input.value;
+      }
+    });
+    
+    // Send config on change (when user releases slider)
+    input.addEventListener('change', () => {
+      if (cfgKey) {
+        const configCmd = `${cfgKey}:${input.value}`;
+        sendCommand(configCmd);
+        console.log('Config:', configCmd);
+      }
+    });
+  });
+}
+
 // Handle window resize
 window.addEventListener('resize', () => {
   two.width = container.clientWidth;
@@ -287,8 +358,9 @@ two.bind('update', () => {
 // Initial render
 updatePendulum(0);
 
-// Setup controls
+// Setup controls and config sliders
 setupControls();
+setupConfigSliders();
 
 // Start connection
 connect();

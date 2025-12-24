@@ -34,6 +34,7 @@ current_velocity = 0.0
 connected_clients = set()
 state_lock = threading.Lock()
 command_queue = queue.Queue()  # Commands from web clients to send to Arduino
+ws_message_queue = queue.Queue()  # Messages to broadcast to web clients
 running = True
 
 # Serial connection (global for access from multiple threads)
@@ -79,20 +80,33 @@ async def ws_handler(websocket, path=None):
         print(f">>> Web client disconnected ({len(connected_clients)} total)")
 
 async def broadcast_state():
-    """Continuously broadcast angle data to all connected clients."""
+    """Continuously broadcast angle data and other messages to all connected clients."""
     global running
     while running:
+        messages_to_send = []
+        
+        # Check for special messages (like upload status)
+        while not ws_message_queue.empty():
+            try:
+                msg = ws_message_queue.get_nowait()
+                messages_to_send.append(msg)
+            except:
+                break
+        
+        # Always send angle data
+        with state_lock:
+            angle_data = json.dumps({
+                "angle": current_angle,
+                "velocity": current_velocity
+            })
+        messages_to_send.append(angle_data)
+        
         if connected_clients:
-            with state_lock:
-                data = json.dumps({
-                    "angle": current_angle,
-                    "velocity": current_velocity
-                })
-            
             disconnected = set()
             for client in connected_clients:
                 try:
-                    await client.send(data)
+                    for msg in messages_to_send:
+                        await client.send(msg)
                 except:
                     disconnected.add(client)
             
@@ -115,6 +129,70 @@ def run_ws_server():
     except:
         pass
 
+def upload_arduino_code():
+    """Upload Arduino code and return success status."""
+    global ser
+    
+    print("\n>>> Uploading Arduino code...")
+    ws_message_queue.put(json.dumps({"upload_status": "started"}))
+    
+    # Close serial port
+    if ser and ser.is_open:
+        ser.close()
+    
+    try:
+        result = subprocess.run(
+            ["arduino-cli", "compile", "--upload", "-p", PORT, "-b", BOARD, SKETCH_PATH],
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 minute timeout
+        )
+        
+        if result.returncode == 0:
+            print(">>> Upload successful!")
+            ws_message_queue.put(json.dumps({"upload_status": "success"}))
+            success = True
+        else:
+            print(">>> Upload failed:")
+            print(result.stderr)
+            ws_message_queue.put(json.dumps({
+                "upload_status": "error",
+                "message": result.stderr[:200] if result.stderr else "Unknown error"
+            }))
+            success = False
+            
+    except FileNotFoundError:
+        print(">>> Error: arduino-cli not found")
+        ws_message_queue.put(json.dumps({
+            "upload_status": "error",
+            "message": "arduino-cli not found. Install from arduino.github.io/arduino-cli/"
+        }))
+        success = False
+    except subprocess.TimeoutExpired:
+        print(">>> Upload timed out")
+        ws_message_queue.put(json.dumps({
+            "upload_status": "error",
+            "message": "Upload timed out after 2 minutes"
+        }))
+        success = False
+    except Exception as e:
+        print(f">>> Upload error: {e}")
+        ws_message_queue.put(json.dumps({
+            "upload_status": "error",
+            "message": str(e)
+        }))
+        success = False
+    
+    # Reconnect serial port
+    time.sleep(2)  # Wait for Arduino to reset
+    try:
+        ser = serial.Serial(PORT, BAUD, timeout=0.1)
+        print(f">>> Reconnected to {PORT}")
+    except Exception as e:
+        print(f">>> Could not reconnect: {e}")
+    
+    return success
+
 def serial_loop():
     """Main loop: handle serial communication with Arduino."""
     global current_angle, current_velocity, ser, running
@@ -128,8 +206,18 @@ def serial_loop():
             # Process commands from web clients
             while not command_queue.empty():
                 cmd = command_queue.get_nowait()
+                
+                # Handle upload command specially
+                if cmd == 'UPLOAD':
+                    upload_arduino_code()
+                    continue
+                
                 if ser and ser.is_open:
-                    ser.write(cmd.encode())
+                    # Config commands (contain ':') need newline
+                    if ':' in cmd:
+                        ser.write((cmd + '\n').encode())
+                    else:
+                        ser.write(cmd.encode())
                     print(f">>> Sent to Arduino: {cmd}")
             
             # Periodically request angle
