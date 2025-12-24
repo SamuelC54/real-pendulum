@@ -415,9 +415,15 @@ void processCommand(String cmd) {
       updateOscillateSpeed();
     }
     else if (c == 'A') {
-      Serial.print("Angle: ");
-      Serial.print(currentAngle, 2);
-      Serial.println(" deg");
+      // Send angle, position, and limit switch status
+      Serial.print("ang=");
+      Serial.print(currentAngle, 1);
+      Serial.print(" pos=");
+      Serial.print(stepper.currentPosition());
+      Serial.print(" limL=");
+      Serial.print(digitalRead(LIMIT_LEFT_PIN) == LOW ? 1 : 0);
+      Serial.print(" limR=");
+      Serial.println(digitalRead(LIMIT_RIGHT_PIN) == LOW ? 1 : 0);
     }
     else if (c == 'S') {
       oscillating = false;

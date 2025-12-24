@@ -31,6 +31,9 @@ WS_PORT = 8765          # WebSocket server port
 # Shared state
 current_angle = 0.0
 current_velocity = 0.0
+current_position = 0
+limit_left = False
+limit_right = False
 connected_clients = set()
 state_lock = threading.Lock()
 command_queue = queue.Queue()  # Commands from web clients to send to Arduino
@@ -55,6 +58,21 @@ def parse_velocity_from_line(line):
     match = re.search(r'vel=([0-9.-]+)', line)
     if match:
         return float(match.group(1))
+    return None
+
+def parse_position_from_line(line):
+    """Try to extract cart position from Arduino output."""
+    match = re.search(r'pos=([0-9.-]+)', line)
+    if match:
+        return int(float(match.group(1)))
+    return None
+
+def parse_limits_from_line(line):
+    """Try to extract limit switch status from Arduino output."""
+    left_match = re.search(r'limL=([01])', line)
+    right_match = re.search(r'limR=([01])', line)
+    if left_match and right_match:
+        return (left_match.group(1) == '1', right_match.group(1) == '1')
     return None
 
 # WebSocket handler
@@ -93,11 +111,14 @@ async def broadcast_state():
             except:
                 break
         
-        # Always send angle data
+        # Always send state data
         with state_lock:
             angle_data = json.dumps({
                 "angle": current_angle,
-                "velocity": current_velocity
+                "velocity": current_velocity,
+                "position": current_position,
+                "limitLeft": limit_left,
+                "limitRight": limit_right
             })
         messages_to_send.append(angle_data)
         
@@ -195,7 +216,7 @@ def upload_arduino_code():
 
 def serial_loop():
     """Main loop: handle serial communication with Arduino."""
-    global current_angle, current_velocity, ser, running
+    global current_angle, current_velocity, current_position, limit_left, limit_right, ser, running
     
     # Request angle periodically
     last_angle_request = 0
@@ -242,6 +263,17 @@ def serial_loop():
                     if velocity is not None:
                         with state_lock:
                             current_velocity = velocity
+                    
+                    position = parse_position_from_line(line)
+                    if position is not None:
+                        with state_lock:
+                            current_position = position
+                    
+                    limits = parse_limits_from_line(line)
+                    if limits is not None:
+                        with state_lock:
+                            limit_left = limits[0]
+                            limit_right = limits[1]
             
             time.sleep(0.01)
             
