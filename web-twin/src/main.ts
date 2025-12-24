@@ -13,6 +13,7 @@ let currentVelocity = 0;
 let currentPosition = 0;  // stepper position
 let limitLeft = false;
 let limitRight = false;
+let queueSize = 0;  // Arduino command queue size
 let previousAngle = 0;
 let lastUpdateTime = Date.now();
 
@@ -25,6 +26,7 @@ const container = document.getElementById('pendulum-container')!;
 const statusEl = document.getElementById('status')!;
 const angleValueEl = document.getElementById('angle-value')!;
 const velocityValueEl = document.getElementById('velocity-value')!;
+const queueValueEl = document.getElementById('queue-value');
 const positionValueEl = document.getElementById('position-value');
 const positionMarkerEl = document.getElementById('position-marker');
 const limitLeftEl = document.getElementById('limit-left');
@@ -336,6 +338,16 @@ function connect() {
           limitLeft = data.limitLeft || false;
           limitRight = data.limitRight || false;
           updatePositionDisplay(currentPosition, limitLeft, limitRight);
+        }
+        
+        // Handle queue size
+        if (data.queueSize !== undefined) {
+          queueSize = data.queueSize;
+          if (queueValueEl) {
+            queueValueEl.textContent = queueSize.toString();
+            // Add visual indicator when queue has items
+            queueValueEl.parentElement?.classList.toggle('has-items', queueSize > 0);
+          }
         }
       } catch (e) {
         console.error('Failed to parse message:', e);

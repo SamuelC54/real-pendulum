@@ -34,6 +34,7 @@ current_velocity = 0.0
 current_position = 0
 limit_left = False
 limit_right = False
+queue_size = 0  # Arduino command queue size
 connected_clients = set()
 state_lock = threading.Lock()
 command_queue = queue.Queue()  # Commands from web clients to send to Arduino
@@ -73,6 +74,13 @@ def parse_limits_from_line(line):
     right_match = re.search(r'limR=([01])', line)
     if left_match and right_match:
         return (left_match.group(1) == '1', right_match.group(1) == '1')
+    return None
+
+def parse_queue_size_from_line(line):
+    """Try to extract command queue size from Arduino output."""
+    match = re.search(r'queue=(\d+)', line)
+    if match:
+        return int(match.group(1))
     return None
 
 # WebSocket handler
@@ -118,7 +126,8 @@ async def broadcast_state():
                 "velocity": current_velocity,
                 "position": current_position,
                 "limitLeft": limit_left,
-                "limitRight": limit_right
+                "limitRight": limit_right,
+                "queueSize": queue_size
             })
         messages_to_send.append(angle_data)
         
@@ -216,7 +225,7 @@ def upload_arduino_code():
 
 def serial_loop():
     """Main loop: handle serial communication with Arduino."""
-    global current_angle, current_velocity, current_position, limit_left, limit_right, ser, running
+    global current_angle, current_velocity, current_position, limit_left, limit_right, queue_size, ser, running
     
     # Request angle periodically
     last_angle_request = 0
@@ -274,6 +283,11 @@ def serial_loop():
                         with state_lock:
                             limit_left = limits[0]
                             limit_right = limits[1]
+                    
+                    q_size = parse_queue_size_from_line(line)
+                    if q_size is not None:
+                        with state_lock:
+                            queue_size = q_size
             
             time.sleep(0.01)
             

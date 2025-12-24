@@ -78,6 +78,14 @@ constexpr long MAX_CART_OFFSET = 3000;             // Maximum cart offset from c
 // Serial input buffer for configuration commands
 String serialBuffer = "";
 
+// Command queue system
+const int QUEUE_SIZE = 16;  // Maximum commands in queue
+String commandQueue[QUEUE_SIZE];
+int queueHead = 0;  // Next command to execute
+int queueTail = 0;  // Where to add new commands
+int queueCount = 0; // Current number of commands in queue
+bool processingCommand = false;  // True when motor is executing a command
+
 // Angle where pendulum hangs down (adjust if your encoder zero is different)
 constexpr float ANGLE_DOWN = 0.0f;    // 0° = hanging down
 constexpr float ANGLE_UP = 180.0f;    // 180° = inverted (goal)
@@ -89,6 +97,49 @@ static long clampLong(long v, long lo, long hi) {
   if (v < lo) return lo;
   if (v > hi) return hi;
   return v;
+}
+
+// Queue management functions
+bool queueIsFull() {
+  return queueCount >= QUEUE_SIZE;
+}
+
+bool queueIsEmpty() {
+  return queueCount == 0;
+}
+
+void queueClear() {
+  queueHead = 0;
+  queueTail = 0;
+  queueCount = 0;
+  processingCommand = false;
+  Serial.print("Queue cleared (");
+  Serial.print(queueCount);
+  Serial.println(" items)");
+}
+
+bool queueAdd(String cmd) {
+  if (queueIsFull()) {
+    Serial.println("Queue full, command rejected");
+    return false;
+  }
+  commandQueue[queueTail] = cmd;
+  queueTail = (queueTail + 1) % QUEUE_SIZE;
+  queueCount++;
+  return true;
+}
+
+String queuePeek() {
+  if (queueIsEmpty()) return "";
+  return commandQueue[queueHead];
+}
+
+String queuePop() {
+  if (queueIsEmpty()) return "";
+  String cmd = commandQueue[queueHead];
+  queueHead = (queueHead + 1) % QUEUE_SIZE;
+  queueCount--;
+  return cmd;
 }
 
 void enableMotor() {
@@ -166,17 +217,21 @@ bool checkLimits() {
   
   // Only stop if moving towards the triggered limit
   if ((leftHit && movingLeft) || (rightHit && movingRight)) {
-    // Stop immediately
+    // Stop immediately and clear everything
     stepper.stop();
     stepper.setCurrentPosition(stepper.currentPosition());  // Clear target
     oscillating = false;
     swingUpMode = false;
+    processingCommand = false;
+    
+    // Clear the entire command queue
+    queueClear();
     
     if (leftHit) {
-      Serial.println("LIMIT: Left switch hit!");
+      Serial.println("LIMIT: Left switch hit! Queue cleared.");
     }
     if (rightHit) {
-      Serial.println("LIMIT: Right switch hit!");
+      Serial.println("LIMIT: Right switch hit! Queue cleared.");
     }
     return true;
   }
@@ -226,6 +281,19 @@ void loop() {
   // Check limit switches
   checkLimits();
 
+  // Check if current command is finished (motor stopped)
+  if (processingCommand && stepper.distanceToGo() == 0 && !oscillating && !swingUpMode) {
+    processingCommand = false;  // Ready for next command
+  }
+  
+  // Process next command from queue if motor is ready
+  if (!processingCommand && !oscillating && !swingUpMode && !queueIsEmpty()) {
+    String nextCmd = queuePop();
+    if (nextCmd.length() > 0) {
+      executeCommand(nextCmd);
+    }
+  }
+  
   // Handle oscillation mode
   if (oscillating && stepper.distanceToGo() == 0) {
     // Reached target, reverse direction
@@ -341,8 +409,38 @@ void loop() {
   }
 }
 
-// Process a command string
+// Process incoming command - immediate commands execute now, others get queued
 void processCommand(String cmd) {
+  cmd.trim();
+  if (cmd.length() == 0) return;
+  
+  char c = cmd.charAt(0);
+  
+  // Immediate commands - always execute right away
+  // A = get angle, S = stop, ? = settings, config commands (contain ':')
+  if (c == 'A' || c == 'S' || c == '?' || cmd.indexOf(':') > 0) {
+    executeCommand(cmd);
+    return;
+  }
+  
+  // Movement commands get queued
+  if (c == 'L' || c == 'R' || c == 'O' || c == 'W' || c == 'P') {
+    if (queueAdd(cmd)) {
+      Serial.print("Queued: ");
+      Serial.print(cmd);
+      Serial.print(" (queue: ");
+      Serial.print(queueCount);
+      Serial.println(")");
+    }
+    return;
+  }
+  
+  // Unknown commands - try to execute immediately
+  executeCommand(cmd);
+}
+
+// Execute a command directly (called from queue or for immediate commands)
+void executeCommand(String cmd) {
   cmd.trim();
   if (cmd.length() == 0) return;
   
@@ -356,6 +454,7 @@ void processCommand(String cmd) {
       } else {
         oscillating = false;
         swingUpMode = false;
+        processingCommand = true;  // Mark as processing
         stepper.setMaxSpeed(manualSpeed);
         stepper.setAcceleration(manualAccel);
         enableMotor();
@@ -371,6 +470,7 @@ void processCommand(String cmd) {
       } else {
         oscillating = false;
         swingUpMode = false;
+        processingCommand = true;  // Mark as processing
         stepper.setMaxSpeed(manualSpeed);
         stepper.setAcceleration(manualAccel);
         enableMotor();
@@ -385,6 +485,8 @@ void processCommand(String cmd) {
         Serial.println("Cannot oscillate: at limit switch");
       } else {
         swingUpMode = false;
+        processingCommand = false;
+        queueClear();  // Clear queue - oscillate takes over
         speedLevel = 0;
         updateOscillateSpeed();
         enableMotor();
@@ -395,11 +497,13 @@ void processCommand(String cmd) {
         stepper.setAcceleration(currentOscillateAccel);
         stepper.moveTo(oscillateCenter + oscillateStep);
         lastMoveTime = millis();
-        Serial.println("Oscillating...");
+        Serial.println("Oscillating... (queue cleared)");
       }
     }
     else if (c == 'W') {
       oscillating = false;
+      processingCommand = false;
+      queueClear();  // Clear queue - swing-up takes over
       swingUpMode = true;
       swingUpCenter = stepper.currentPosition();
       previousAngle = currentAngle;
@@ -407,7 +511,7 @@ void processCommand(String cmd) {
       enableMotor();
       stepper.setMaxSpeed(swingupSpeed);
       stepper.setAcceleration(swingupAccel);
-      Serial.println("Swing-up mode: pumping energy...");
+      Serial.println("Swing-up mode... (queue cleared)");
     }
     else if (c == 'P') {
       speedLevel++;
@@ -415,7 +519,7 @@ void processCommand(String cmd) {
       updateOscillateSpeed();
     }
     else if (c == 'A') {
-      // Send angle, position, and limit switch status
+      // Send angle, position, limit switch status, and queue size
       Serial.print("ang=");
       Serial.print(currentAngle, 1);
       Serial.print(" pos=");
@@ -423,16 +527,21 @@ void processCommand(String cmd) {
       Serial.print(" limL=");
       Serial.print(digitalRead(LIMIT_LEFT_PIN) == LOW ? 1 : 0);
       Serial.print(" limR=");
-      Serial.println(digitalRead(LIMIT_RIGHT_PIN) == LOW ? 1 : 0);
+      Serial.print(digitalRead(LIMIT_RIGHT_PIN) == LOW ? 1 : 0);
+      Serial.print(" queue=");
+      Serial.println(queueCount);
     }
     else if (c == 'S') {
+      // Stop everything and clear queue
       oscillating = false;
       swingUpMode = false;
       speedLevel = 0;
+      processingCommand = false;
+      queueClear();  // Clear all pending commands
       stepper.setMaxSpeed(manualSpeed);
       stepper.setAcceleration(manualAccel);
       stepper.stop();
-      Serial.println("Stopped");
+      Serial.println("Stopped, queue cleared");
     }
     else if (c == '?') {
       // Print current settings
