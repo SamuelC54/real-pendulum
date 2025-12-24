@@ -1,9 +1,13 @@
 import serial
 import keyboard
 import time
+import subprocess
+import os
 
-PORT = "COM3"     # change this (Arduino IDE shows the port)
+PORT = "COM3"           # change this (Arduino IDE shows the port)
 BAUD = 115200
+BOARD = "arduino:avr:uno"  # change if using a different board
+SKETCH_PATH = os.path.join(os.path.dirname(__file__), "..", "arduino-code")
 
 ser = serial.Serial(PORT, BAUD, timeout=0.1)
 
@@ -12,6 +16,7 @@ print("  LEFT/RIGHT arrows = move left/right")
 print("  UP arrow (hold)   = oscillate back and forth")
 print("  P                 = double oscillation speed")
 print("  A                 = read angle")
+print("  U                 = upload Arduino code (uses arduino-cli)")
 print("  ESC               = stop and quit")
 print()
 
@@ -20,6 +25,7 @@ right_was_pressed = False
 up_was_pressed = False
 p_was_pressed = False
 a_was_pressed = False
+u_was_pressed = False
 up_is_held = False
 
 while True:
@@ -28,6 +34,7 @@ while True:
     up_pressed = keyboard.is_pressed("up")
     p_pressed = keyboard.is_pressed("p")
     a_pressed = keyboard.is_pressed("a")
+    u_pressed = keyboard.is_pressed("u")
     
     # Send L only on key down (not while held)
     if left_pressed and not left_was_pressed:
@@ -54,11 +61,35 @@ while True:
     if a_pressed and not a_was_pressed:
         ser.write(b"A")
     
+    # U key: upload Arduino code via arduino-cli
+    if u_pressed and not u_was_pressed:
+        ser.close()
+        print("\n>>> Uploading Arduino code...")
+        try:
+            result = subprocess.run(
+                ["arduino-cli", "compile", "--upload", "-p", PORT, "-b", BOARD, SKETCH_PATH],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                print(">>> Upload successful!")
+            else:
+                print(">>> Upload failed:")
+                print(result.stderr)
+        except FileNotFoundError:
+            print(">>> Error: arduino-cli not found. Install it from https://arduino.github.io/arduino-cli/")
+        
+        time.sleep(1)  # Give Arduino time to reset
+        ser = serial.Serial(PORT, BAUD, timeout=0.1)
+        print(">>> Reconnected to", PORT)
+        print()
+    
     left_was_pressed = left_pressed
     right_was_pressed = right_pressed
     up_was_pressed = up_pressed
     p_was_pressed = p_pressed
     a_was_pressed = a_pressed
+    u_was_pressed = u_pressed
     
     # Read and print any responses from Arduino
     if ser.in_waiting > 0:
