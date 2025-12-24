@@ -11,12 +11,15 @@ print("Controls:")
 print("  LEFT/RIGHT arrows = move left/right")
 print("  UP arrow (hold)   = oscillate back and forth")
 print("  P                 = double oscillation speed")
+print("  A                 = read angle")
 print("  ESC               = stop and quit")
+print()
 
 left_was_pressed = False
 right_was_pressed = False
 up_was_pressed = False
 p_was_pressed = False
+a_was_pressed = False
 up_is_held = False
 
 while True:
@@ -24,6 +27,7 @@ while True:
     right_pressed = keyboard.is_pressed("right")
     up_pressed = keyboard.is_pressed("up")
     p_pressed = keyboard.is_pressed("p")
+    a_pressed = keyboard.is_pressed("a")
     
     # Send L only on key down (not while held)
     if left_pressed and not left_was_pressed:
@@ -45,12 +49,22 @@ while True:
     # P key: double speed (only on key down)
     if p_pressed and not p_was_pressed:
         ser.write(b"P")
-        print("Speed doubled!")
+    
+    # A key: request angle (only on key down)
+    if a_pressed and not a_was_pressed:
+        ser.write(b"A")
     
     left_was_pressed = left_pressed
     right_was_pressed = right_pressed
     up_was_pressed = up_pressed
     p_was_pressed = p_pressed
+    a_was_pressed = a_pressed
+    
+    # Read and print any responses from Arduino
+    if ser.in_waiting > 0:
+        line = ser.readline().decode('utf-8', errors='ignore').strip()
+        if line:
+            print(line)
     
     if keyboard.is_pressed("esc"):
         ser.write(b"S")

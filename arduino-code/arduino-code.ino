@@ -1,9 +1,15 @@
 #include <AccelStepper.h>
+#include <math.h>
 
 // -------------------- Pin definitions --------------------
+// Stepper motor
 constexpr int DIR_PIN    = 2;
 constexpr int STEP_PIN   = 9;   // User moved to pin 9
 constexpr int ENABLE_PIN = 8;
+
+// Encoder (KY-040)
+constexpr int PIN_CLK = 7;
+constexpr int PIN_DT  = 6;
 
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
@@ -30,6 +36,11 @@ constexpr bool USE_SOFT_LIMITS = false;
 constexpr long MIN_POS = 0;
 constexpr long MAX_POS = 20000;
 
+// -------------------- Encoder settings --------------------
+// KY-040: typically 20 detents → 40 transitions per rev
+constexpr int ENCODER_STEPS_PER_REV = 40;
+
+// -------------------- State variables --------------------
 unsigned long lastMoveTime = 0;
 bool motorEnabled = true;
 bool oscillating = false;
@@ -40,6 +51,11 @@ long oscillateCenter = 0;
 int speedLevel = 0;  // 0 = 1x, 1 = 2x, 2 = 4x, etc.
 float currentOscillateSpeed = OSCILLATE_BASE_SPEED;
 float currentOscillateAccel = OSCILLATE_BASE_ACCEL;
+
+// Encoder state
+int lastCLK;
+long encoderPosition = 0;
+float currentAngle = 0.0f;
 
 static long clampLong(long v, long lo, long hi) {
   if (v < lo) return lo;
@@ -87,23 +103,56 @@ void updateOscillateSpeed() {
   Serial.println(" steps/sec");
 }
 
+// Read encoder and update angle
+void readEncoder() {
+  int currentCLK = digitalRead(PIN_CLK);
+  
+  if (currentCLK != lastCLK) {
+    if (digitalRead(PIN_DT) != currentCLK) {
+      encoderPosition++;   // clockwise
+    } else {
+      encoderPosition--;   // counter-clockwise
+    }
+    
+    // Convert position to angle and wrap to [0, 360)
+    currentAngle = fmod((encoderPosition * 360.0f) / ENCODER_STEPS_PER_REV, 360.0f);
+    if (currentAngle < 0) currentAngle += 360.0f;
+  }
+  
+  lastCLK = currentCLK;
+}
+
+// Get current angle (call readEncoder() first to update)
+float getAngle() {
+  return currentAngle;
+}
+
 void setup() {
+  // Stepper setup
   pinMode(ENABLE_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, LOW);  // Enable DRV8825 (active LOW)
 
   stepper.setMaxSpeed(MANUAL_SPEED);
   stepper.setAcceleration(MANUAL_ACCEL);
 
+  // Encoder setup
+  pinMode(PIN_CLK, INPUT_PULLUP);
+  pinMode(PIN_DT, INPUT_PULLUP);
+  lastCLK = digitalRead(PIN_CLK);
+
   Serial.begin(115200);
   // Flush any garbage in serial buffer
   while (Serial.available()) Serial.read();
   
-  Serial.println("Commands: L=left, R=right, O=oscillate, P=speed up, S=stop");
+  Serial.println("Commands: L=left, R=right, O=oscillate, P=speed up, A=angle, S=stop");
   lastMoveTime = millis();
 }
 
 void loop() {
   stepper.run();
+  
+  // Always read encoder
+  readEncoder();
 
   // Handle oscillation mode
   if (oscillating && stepper.distanceToGo() == 0) {
@@ -163,6 +212,12 @@ void loop() {
       speedLevel++;
       if (speedLevel > 5) speedLevel = 5;  // Cap at 32x to prevent insane speeds
       updateOscillateSpeed();
+    }
+    else if (c == 'A') {
+      // Print current angle
+      Serial.print("Angle: ");
+      Serial.print(currentAngle, 2);
+      Serial.println(" deg");
     }
     else if (c == 'S') {
       oscillating = false;
