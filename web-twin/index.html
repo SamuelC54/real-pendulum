@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pendulum Digital Twin</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="pendulum-container"></div>
+      <div id="info-panel">
+        <h1>Pendulum Digital Twin</h1>
+        <div id="status">Connecting...</div>
+        
+        <div id="stats">
+          <div class="stat-box">
+            <span class="stat-label">Angle</span>
+            <span id="angle-value" class="stat-value">0.0</span>°
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Velocity</span>
+            <span id="velocity-value" class="stat-value">0.0</span>°/s
+          </div>
+        </div>
+
+        <div id="controls">
+          <h2>Controls</h2>
+          
+          <div class="control-row">
+            <button id="btn-left" class="control-btn" data-cmd="L">← Left</button>
+            <button id="btn-right" class="control-btn" data-cmd="R">Right →</button>
+          </div>
+          
+          <div class="control-row">
+            <button id="btn-oscillate" class="control-btn hold-btn" data-cmd-start="O" data-cmd-stop="S">
+              ↕ Oscillate
+            </button>
+          </div>
+          
+          <div class="control-row">
+            <button id="btn-swingup" class="control-btn hold-btn accent" data-cmd-start="W" data-cmd-stop="S">
+              ⚡ Swing Up
+            </button>
+          </div>
+          
+          <div class="control-row">
+            <button id="btn-stop" class="control-btn stop-btn" data-cmd="S">
+              ⏹ Stop
+            </button>
+          </div>
+          
+          <div class="control-row secondary">
+            <button id="btn-speed" class="control-btn small" data-cmd="P">P Speed+</button>
+            <button id="btn-angle" class="control-btn small" data-cmd="A">A Angle</button>
+          </div>
+        </div>
+        
+        <div id="instructions">
+          <p>Click buttons or hold Oscillate/Swing Up</p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

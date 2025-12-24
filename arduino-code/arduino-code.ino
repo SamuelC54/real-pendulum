@@ -66,16 +66,16 @@ bool swingUpMode = false;
 float previousAngle = 0.0f;
 unsigned long lastSwingUpTime = 0;
 long swingUpCenter = 0;  // Cart position when swing-up started
-constexpr unsigned long SWINGUP_INTERVAL_MS = 10;  // Control loop interval
-constexpr float SWINGUP_SPEED = 8000;             // Fast cart movement
-constexpr float SWINGUP_ACCEL = 8000;              // High acceleration
-constexpr long SWINGUP_STEP = 800;                 // Movement step size
-constexpr float VELOCITY_THRESHOLD = 0.5f;         // Lower threshold to catch more motion
+constexpr unsigned long SWINGUP_INTERVAL_MS = 50;  // Control loop interval (50ms for encoder resolution)
+unsigned long lastDebugTime = 0;  // For debug output
 
-// Centering: bias pumping toward center position
-// When pump direction matches centering direction, pump harder (1 + GAIN)
-// When pump direction opposes centering, pump less (1 - GAIN)
-constexpr float CENTERING_GAIN = 0.3f;  // 0 = no centering, 0.5 = strong centering
+// PD Control parameters for swing-up
+constexpr float SWINGUP_SPEED = 10000;             // Max cart speed
+constexpr float SWINGUP_ACCEL = 6000;              // Cart acceleration
+constexpr float KP_SWINGUP = 20.0f;                // Proportional gain (cart steps per pump signal unit)
+constexpr float KD_SWINGUP = 0.0f;                 // Derivative gain (start with 0, add later if needed)
+constexpr float KC_SWINGUP = 0.0f;                 // Centering gain (start with 0)
+constexpr long MAX_CART_OFFSET = 3000;             // Maximum cart offset from center (steps)
 
 // Angle where pendulum hangs down (adjust if your encoder zero is different)
 constexpr float ANGLE_DOWN = 0.0f;    // 0° = hanging down
@@ -234,7 +234,7 @@ void loop() {
     lastMoveTime = millis();
   }
 
-  // Handle swing-up mode - pump energy using energy-based control
+  // Handle swing-up mode using PD control (smooth, proportional response)
   if (swingUpMode && (millis() - lastSwingUpTime >= SWINGUP_INTERVAL_MS)) {
     // Calculate angular velocity (degrees per interval)
     float angularVelocity = currentAngle - previousAngle;
@@ -243,56 +243,63 @@ void loop() {
     if (angularVelocity > 180.0f) angularVelocity -= 360.0f;
     if (angularVelocity < -180.0f) angularVelocity += 360.0f;
     
-    // Only pump if velocity is significant
-    if (fabs(angularVelocity) > VELOCITY_THRESHOLD) {
-      // Energy-based swing-up: use cos(angle) * velocity
-      // cos(angle) is positive near bottom (0°), negative near top (180°)
-      float angleRad = currentAngle * (3.14159f / 180.0f);
-      float cosAngle = cos(angleRad);
-      
-      // Energy pumping term
-      float pumpDirection = cosAngle * angularVelocity * SWINGUP_DIRECTION;
-      
-      // Calculate drift from center for centering correction
-      long currentPos = stepper.currentPosition();
-      long drift = currentPos - swingUpCenter;
-      
-      // Bias pumping toward center: if we need to go left AND we're right of center, pump harder
-      // If we need to go left BUT we're left of center, pump less
-      long pumpStep = SWINGUP_STEP;
-      
-      // Adjust pump step based on whether pump direction helps centering
-      if (pumpDirection > 0) {
-        // Want to move right
-        if (drift > 0) {
-          // Already right of center, pump less
-          pumpStep = (long)(SWINGUP_STEP * (1.0f - CENTERING_GAIN));
-        } else {
-          // Left of center, pump more (helps centering)
-          pumpStep = (long)(SWINGUP_STEP * (1.0f + CENTERING_GAIN));
-        }
-      } else {
-        // Want to move left
-        if (drift < 0) {
-          // Already left of center, pump less
-          pumpStep = (long)(SWINGUP_STEP * (1.0f - CENTERING_GAIN));
-        } else {
-          // Right of center, pump more (helps centering)
-          pumpStep = (long)(SWINGUP_STEP * (1.0f + CENTERING_GAIN));
-        }
-      }
-      
-      long target = currentPos;
-      
-      // Move cart to pump energy
-      if (pumpDirection > 0 && canMoveRight()) {
-        target += pumpStep;
-      } else if (pumpDirection < 0 && canMoveLeft()) {
-        target -= pumpStep;
-      }
-      
-      stepper.moveTo(target);
-      lastMoveTime = millis();
+    // Scale velocity to degrees per second (for consistent tuning)
+    float dt = SWINGUP_INTERVAL_MS / 1000.0f;
+    float angularVelocityPerSec = angularVelocity / dt;
+    
+    // Energy-based swing-up: pump signal = cos(angle) * angular_velocity
+    // cos(angle) is positive near bottom (0°), negative near top (180°)
+    // This pumps energy when pendulum swings through bottom
+    float angleRad = currentAngle * (3.14159f / 180.0f);
+    float cosAngle = cos(angleRad);
+    float pumpSignal = cosAngle * angularVelocityPerSec * SWINGUP_DIRECTION;
+    
+    // Current cart state
+    long currentPos = stepper.currentPosition();
+    long drift = currentPos - swingUpCenter;
+    
+    // PD Control:
+    // P (proportional): Cart offset proportional to pump signal
+    // D (derivative): Damping based on angular acceleration (smooths response)
+    // C (centering): Pull cart back toward starting position
+    
+    float pTerm = KP_SWINGUP * pumpSignal;                    // Proportional to pump signal
+    float dTerm = -KD_SWINGUP * angularVelocityPerSec;        // Damping (opposes fast swings)
+    float cTerm = -KC_SWINGUP * (float)drift;                 // Centering force
+    
+    // Calculate desired cart offset from center
+    float desiredOffset = pTerm + dTerm + cTerm;
+    
+    // Clamp to maximum allowed offset
+    if (desiredOffset > MAX_CART_OFFSET) desiredOffset = MAX_CART_OFFSET;
+    if (desiredOffset < -MAX_CART_OFFSET) desiredOffset = -MAX_CART_OFFSET;
+    
+    // Calculate target position
+    long target = swingUpCenter + (long)desiredOffset;
+    
+    // Respect limit switches
+    if (target > currentPos && !canMoveRight()) {
+      target = currentPos;
+    } else if (target < currentPos && !canMoveLeft()) {
+      target = currentPos;
+    }
+    
+    stepper.moveTo(target);
+    lastMoveTime = millis();
+    
+    // Debug output every 500ms
+    if (millis() - lastDebugTime > 500) {
+      Serial.print("ang=");
+      Serial.print(currentAngle, 1);
+      Serial.print(" vel=");
+      Serial.print(angularVelocityPerSec, 1);
+      Serial.print(" pump=");
+      Serial.print(pumpSignal, 1);
+      Serial.print(" offset=");
+      Serial.print((long)desiredOffset);
+      Serial.print(" target=");
+      Serial.println(target);
+      lastDebugTime = millis();
     }
     
     previousAngle = currentAngle;

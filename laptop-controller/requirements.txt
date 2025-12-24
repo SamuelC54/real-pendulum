@@ -1,6 +1,7 @@
 pyserial
 keyboard
 watchdog
+websockets
 
 
 
