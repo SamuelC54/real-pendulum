@@ -11,6 +11,10 @@ constexpr int ENABLE_PIN = 8;
 constexpr int PIN_CLK = 7;
 constexpr int PIN_DT  = 6;
 
+// Limit switches (active LOW with INPUT_PULLUP)
+constexpr int LIMIT_LEFT_PIN  = 4;   // Left end of rail
+constexpr int LIMIT_RIGHT_PIN = 5;   // Right end of rail
+
 AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 // -------------------- Manual tuning --------------------
@@ -127,6 +131,42 @@ float getAngle() {
   return currentAngle;
 }
 
+// Check limit switches - only stops if moving TOWARDS the limit
+bool checkLimits() {
+  bool leftHit = (digitalRead(LIMIT_LEFT_PIN) == LOW);
+  bool rightHit = (digitalRead(LIMIT_RIGHT_PIN) == LOW);
+  
+  long distanceToGo = stepper.distanceToGo();
+  bool movingLeft = (distanceToGo < 0);
+  bool movingRight = (distanceToGo > 0);
+  
+  // Only stop if moving towards the triggered limit
+  if ((leftHit && movingLeft) || (rightHit && movingRight)) {
+    // Stop immediately
+    stepper.stop();
+    stepper.setCurrentPosition(stepper.currentPosition());  // Clear target
+    oscillating = false;
+    
+    if (leftHit) {
+      Serial.println("LIMIT: Left switch hit!");
+    }
+    if (rightHit) {
+      Serial.println("LIMIT: Right switch hit!");
+    }
+    return true;
+  }
+  return false;
+}
+
+// Check if movement in a direction is allowed
+bool canMoveLeft() {
+  return (digitalRead(LIMIT_LEFT_PIN) == HIGH);
+}
+
+bool canMoveRight() {
+  return (digitalRead(LIMIT_RIGHT_PIN) == HIGH);
+}
+
 void setup() {
   // Stepper setup
   pinMode(ENABLE_PIN, OUTPUT);
@@ -139,6 +179,10 @@ void setup() {
   pinMode(PIN_CLK, INPUT_PULLUP);
   pinMode(PIN_DT, INPUT_PULLUP);
   lastCLK = digitalRead(PIN_CLK);
+
+  // Limit switch setup
+  pinMode(LIMIT_LEFT_PIN, INPUT_PULLUP);
+  pinMode(LIMIT_RIGHT_PIN, INPUT_PULLUP);
 
   Serial.begin(115200);
   // Flush any garbage in serial buffer
@@ -153,6 +197,9 @@ void loop() {
   
   // Always read encoder
   readEncoder();
+  
+  // Check limit switches
+  checkLimits();
 
   // Handle oscillation mode
   if (oscillating && stepper.distanceToGo() == 0) {
@@ -174,38 +221,51 @@ void loop() {
     char c = (char)Serial.read();
 
     if (c == 'L') {
-      oscillating = false;
-      stepper.setMaxSpeed(MANUAL_SPEED);
-      stepper.setAcceleration(MANUAL_ACCEL);
-      enableMotor();
-      long target = stepper.currentPosition() - MANUAL_STEP;
-      if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
-      stepper.moveTo(target);
-      lastMoveTime = millis();
+      if (!canMoveLeft()) {
+        Serial.println("Blocked: left limit");
+      } else {
+        oscillating = false;
+        stepper.setMaxSpeed(MANUAL_SPEED);
+        stepper.setAcceleration(MANUAL_ACCEL);
+        enableMotor();
+        long target = stepper.currentPosition() - MANUAL_STEP;
+        if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
+        stepper.moveTo(target);
+        lastMoveTime = millis();
+      }
     }
     else if (c == 'R') {
-      oscillating = false;
-      stepper.setMaxSpeed(MANUAL_SPEED);
-      stepper.setAcceleration(MANUAL_ACCEL);
-      enableMotor();
-      long target = stepper.currentPosition() + MANUAL_STEP;
-      if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
-      stepper.moveTo(target);
-      lastMoveTime = millis();
+      if (!canMoveRight()) {
+        Serial.println("Blocked: right limit");
+      } else {
+        oscillating = false;
+        stepper.setMaxSpeed(MANUAL_SPEED);
+        stepper.setAcceleration(MANUAL_ACCEL);
+        enableMotor();
+        long target = stepper.currentPosition() + MANUAL_STEP;
+        if (USE_SOFT_LIMITS) target = clampLong(target, MIN_POS, MAX_POS);
+        stepper.moveTo(target);
+        lastMoveTime = millis();
+      }
     }
     else if (c == 'O') {
-      // Start oscillation (reset speed level)
-      speedLevel = 0;
-      updateOscillateSpeed();
-      enableMotor();
-      oscillating = true;
-      oscillateCenter = stepper.currentPosition();
-      oscillateDirection = 1;
-      stepper.setMaxSpeed(currentOscillateSpeed);
-      stepper.setAcceleration(currentOscillateAccel);
-      stepper.moveTo(oscillateCenter + OSCILLATE_STEP);
-      lastMoveTime = millis();
-      Serial.println("Oscillating...");
+      // Check if we can oscillate (not at a limit)
+      if (!canMoveLeft() || !canMoveRight()) {
+        Serial.println("Cannot oscillate: at limit switch");
+      } else {
+        // Start oscillation (reset speed level)
+        speedLevel = 0;
+        updateOscillateSpeed();
+        enableMotor();
+        oscillating = true;
+        oscillateCenter = stepper.currentPosition();
+        oscillateDirection = 1;
+        stepper.setMaxSpeed(currentOscillateSpeed);
+        stepper.setAcceleration(currentOscillateAccel);
+        stepper.moveTo(oscillateCenter + OSCILLATE_STEP);
+        lastMoveTime = millis();
+        Serial.println("Oscillating...");
+      }
     }
     else if (c == 'P') {
       // Double the speed
