@@ -31,6 +31,7 @@ const positionValueEl = document.getElementById('position-value');
 const positionMarkerEl = document.getElementById('position-marker');
 const limitLeftEl = document.getElementById('limit-left');
 const limitRightEl = document.getElementById('limit-right');
+const loadingSpinnerEl = document.getElementById('loading-spinner');
 
 // Initialize Two.js
 const two = new Two({
@@ -282,6 +283,9 @@ function connect() {
     ws.onopen = () => {
       statusEl.textContent = '● Connected';
       statusEl.classList.add('connected');
+      container.classList.remove('disconnected');
+      container.classList.add('connected');
+      if (loadingSpinnerEl) loadingSpinnerEl.classList.add('hidden');
       console.log('Connected to pendulum controller');
     };
     
@@ -357,12 +361,18 @@ function connect() {
     ws.onclose = () => {
       statusEl.textContent = 'Disconnected - Reconnecting...';
       statusEl.classList.remove('connected');
+      container.classList.remove('connected');
+      container.classList.add('disconnected');
+      if (loadingSpinnerEl) loadingSpinnerEl.classList.remove('hidden');
       scheduleReconnect();
     };
     
     ws.onerror = () => {
       statusEl.textContent = 'Connection error';
       statusEl.classList.remove('connected');
+      container.classList.remove('connected');
+      container.classList.add('disconnected');
+      if (loadingSpinnerEl) loadingSpinnerEl.classList.remove('hidden');
     };
   } catch (e) {
     statusEl.textContent = 'Failed to connect';
@@ -456,29 +466,7 @@ window.addEventListener('resize', () => {
   two.height = container.clientHeight;
 });
 
-// Demo mode - oscillate pendulum if not connected
-let demoAngle = 0;
-let demoVelocity = 50;
-two.bind('update', () => {
-  // If not connected, run demo animation
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    demoAngle += demoVelocity * (1/60);
-    
-    // Simulate pendulum physics (simple harmonic motion)
-    const gravity = 200;
-    const length = 1;
-    const angleRad = demoAngle * (Math.PI / 180);
-    demoVelocity -= (gravity / length) * Math.sin(angleRad) * (1/60);
-    demoVelocity *= 0.999;  // Damping
-    
-    currentAngle = demoAngle;
-    currentVelocity = demoVelocity;
-    
-    angleValueEl.textContent = currentAngle.toFixed(1);
-    velocityValueEl.textContent = currentVelocity.toFixed(1);
-    updatePendulum(currentAngle);
-  }
-});
+// No demo mode - show loading spinner when disconnected
 
 // Initial render
 updatePendulum(0);

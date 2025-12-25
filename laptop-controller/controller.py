@@ -99,8 +99,12 @@ async def ws_handler(websocket, path=None):
                     print(f">>> Received command: {cmd}")
             except json.JSONDecodeError:
                 pass
+            except Exception as e:
+                print(f">>> Error processing message: {e}")
     except websockets.exceptions.ConnectionClosed:
         pass
+    except Exception as e:
+        print(f">>> WebSocket handler error: {e}")
     finally:
         connected_clients.discard(websocket)
         print(f">>> Web client disconnected ({len(connected_clients)} total)")
@@ -109,40 +113,45 @@ async def broadcast_state():
     """Continuously broadcast angle data and other messages to all connected clients."""
     global running
     while running:
-        messages_to_send = []
-        
-        # Check for special messages (like upload status)
-        while not ws_message_queue.empty():
-            try:
-                msg = ws_message_queue.get_nowait()
-                messages_to_send.append(msg)
-            except:
-                break
-        
-        # Always send state data
-        with state_lock:
-            angle_data = json.dumps({
-                "angle": current_angle,
-                "velocity": current_velocity,
-                "position": current_position,
-                "limitLeft": limit_left,
-                "limitRight": limit_right,
-                "queueSize": queue_size
-            })
-        messages_to_send.append(angle_data)
-        
-        if connected_clients:
-            disconnected = set()
-            for client in connected_clients:
-                try:
-                    for msg in messages_to_send:
-                        await client.send(msg)
-                except:
-                    disconnected.add(client)
+        try:
+            messages_to_send = []
             
-            connected_clients.difference_update(disconnected)
-        
-        await asyncio.sleep(0.033)  # ~30 FPS
+            # Check for special messages (like upload status)
+            while not ws_message_queue.empty():
+                try:
+                    msg = ws_message_queue.get_nowait()
+                    messages_to_send.append(msg)
+                except:
+                    break
+            
+            # Always send state data
+            with state_lock:
+                angle_data = json.dumps({
+                    "angle": current_angle,
+                    "velocity": current_velocity,
+                    "position": current_position,
+                    "limitLeft": limit_left,
+                    "limitRight": limit_right,
+                    "queueSize": queue_size
+                })
+            messages_to_send.append(angle_data)
+            
+            if connected_clients:
+                # Copy the set to avoid modification during iteration
+                clients = list(connected_clients)
+                for client in clients:
+                    try:
+                        for msg in messages_to_send:
+                            await client.send(msg)
+                    except websockets.exceptions.ConnectionClosed:
+                        connected_clients.discard(client)
+                    except Exception as e:
+                        connected_clients.discard(client)
+            
+            await asyncio.sleep(0.033)  # ~30 FPS
+        except Exception as e:
+            print(f">>> Broadcast error: {e}")
+            await asyncio.sleep(0.1)
 
 async def start_ws_server():
     """Start the WebSocket server."""
@@ -156,8 +165,8 @@ def run_ws_server():
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(start_ws_server())
-    except:
-        pass
+    except Exception as e:
+        print(f">>> WebSocket server error: {e}")
 
 def upload_arduino_code():
     """Upload Arduino code and return success status."""

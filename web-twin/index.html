@@ -8,7 +8,12 @@
   </head>
   <body>
     <div id="app">
-      <div id="pendulum-container"></div>
+      <div id="pendulum-container" class="disconnected">
+        <div id="loading-spinner" class="loading-spinner">
+          <div class="spinner"></div>
+          <span>Waiting for connection...</span>
+        </div>
+      </div>
       <div id="info-panel">
         <h1>Pendulum Digital Twin</h1>
         <div id="status">Connecting...</div>
