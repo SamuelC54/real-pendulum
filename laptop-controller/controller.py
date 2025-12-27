@@ -173,12 +173,12 @@ def compute_velocity() -> int:
     elif state.mode == "manual_left":
         if state.limit_left:  # Left limit blocks moving left
             return 0
-        return config.manual_speed
+        return -config.manual_speed  # Negative = left
     
     elif state.mode == "manual_right":
         if state.limit_right:  # Right limit blocks moving right
             return 0
-        return -config.manual_speed
+        return config.manual_speed  # Positive = right
     
     elif state.mode == "oscillate":
         return compute_oscillate()

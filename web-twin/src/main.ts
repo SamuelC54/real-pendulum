@@ -144,7 +144,7 @@ function updatePositionDisplay(position: number, limLeft: boolean, limRight: boo
   const range = maxPosition - minPosition;
   let normalizedPos = 0.5;
   if (range > 0) {
-    normalizedPos = 1 - (position - minPosition) / range;  // Inverted to match physical direction
+    normalizedPos = (position - minPosition) / range;  // Left = small, Right = large
   }
   
   if (positionMarkerEl) {

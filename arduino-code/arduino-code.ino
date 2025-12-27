@@ -84,6 +84,7 @@ void setup() {
   // Stepper configuration for velocity mode
   stepper.setMaxSpeed(MAX_SPEED);
   stepper.setAcceleration(ACCELERATION);
+  stepper.setPinsInverted(true, false, false);  // Invert direction pin
   
   Serial.println("VELOCITY_MODE_READY");
 }
@@ -136,8 +137,8 @@ bool checkLimits() {
   bool rightHit = (digitalRead(LIMIT_RIGHT_PIN) == LOW);
   
   // If moving towards a triggered limit, stop
-  // Note: positive velocity = physical left, negative = physical right (inverted)
-  if ((leftHit && targetVelocity > 0) || (rightHit && targetVelocity < 0)) {
+  // Positive velocity = right, negative velocity = left
+  if ((leftHit && targetVelocity < 0) || (rightHit && targetVelocity > 0)) {
     targetVelocity = 0;
     stepper.setSpeed(0);
     return true;
@@ -160,7 +161,7 @@ void sendSensorData() {
   bool leftLimit = (digitalRead(LIMIT_LEFT_PIN) == LOW);
   bool rightLimit = (digitalRead(LIMIT_RIGHT_PIN) == LOW);
   
-  // Get current position
+  // Get current position (positive velocity = right = increasing position)
   long position = stepper.currentPosition();
   
   // Send compact data format
