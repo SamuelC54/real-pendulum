@@ -2,10 +2,13 @@
 #include <math.h>
 
 // -------------------- Pin definitions --------------------
-// Stepper motor
+// Stepper motor (DM542 driver)
+// Wiring: PUL+ -> STEP_PIN, PUL- -> GND
+//         DIR+ -> DIR_PIN,  DIR- -> GND
+//         ENA+ -> ENABLE_PIN, ENA- -> GND
 constexpr int DIR_PIN    = 2;
-constexpr int STEP_PIN   = 9;   // User moved to pin 9
-constexpr int ENABLE_PIN = 8;
+constexpr int STEP_PIN   = 9;
+constexpr int ENABLE_PIN = 8;   // Active LOW (LOW = enabled)
 
 // Encoder (KY-040)
 constexpr int PIN_CLK = 7;
@@ -19,19 +22,20 @@ AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
 
 // -------------------- Motor tuning (configurable via serial) --------------------
 // These are default values, can be changed at runtime via web UI
-float manualSpeed = 6000;       // steps/sec
-float manualAccel = 10000;      // steps/sec^2
-long manualStep = 200;          // steps per button press
+// Updated for DM542 + NEMA 23 (higher performance)
+float manualSpeed = 10000;      // steps/sec
+float manualAccel = 20000;      // steps/sec^2
+long manualStep = 500;          // steps per button press
 
-float oscillateSpeed = 2000;    // oscillation speed
-float oscillateAccel = 4000;    // oscillation acceleration
-long oscillateStep = 600;       // oscillation amplitude (steps)
+float oscillateSpeed = 5000;    // oscillation speed
+float oscillateAccel = 10000;   // oscillation acceleration
+long oscillateStep = 1000;      // oscillation amplitude (steps)
 
-float swingupSpeed = 10000;     // swing-up max speed
-float swingupAccel = 6000;      // swing-up acceleration
-float swingupKp = 20.0f;        // swing-up proportional gain
+float swingupSpeed = 20000;     // swing-up max speed
+float swingupAccel = 15000;     // swing-up acceleration
+float swingupKp = 40.0f;        // swing-up proportional gain
 
-constexpr float MAX_SPEED = 16000;  // AccelStepper practical limit
+constexpr float MAX_SPEED = 500000;  // DM542 can handle much higher speeds
 
 // Disable motor after idle for this many ms (saves power, stops pulsing)
 constexpr unsigned long IDLE_TIMEOUT_MS = 500;
