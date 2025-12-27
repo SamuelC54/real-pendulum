@@ -155,6 +155,28 @@ h2 {
   color: var(--accent-cyan);
 }
 
+/* Mode Display */
+#mode-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-dim);
+}
+
+#current-mode {
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+#current-mode.active {
+  color: var(--accent-green);
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
 /* Stats */
 #stats {
   display: flex;
@@ -361,6 +383,41 @@ h2 {
 
 .control-btn.stop-btn:hover {
   background: rgba(255, 60, 60, 0.25);
+}
+
+.control-btn.zero-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--text-dim);
+}
+
+.control-btn.zero-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+/* Toggle buttons - stay highlighted when mode is active */
+.control-btn.toggle-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.control-btn.toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.control-btn.toggle-btn.active {
+  background: rgba(0, 255, 136, 0.2);
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+  box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+}
+
+.control-btn.toggle-btn.accent.active {
+  background: rgba(255, 0, 170, 0.25);
+  border-color: var(--accent-magenta);
+  color: var(--accent-magenta);
+  box-shadow: 0 0 15px rgba(255, 0, 170, 0.3);
 }
 
 .control-btn.upload-btn {

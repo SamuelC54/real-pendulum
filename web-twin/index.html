@@ -18,6 +18,10 @@
         <h1>Pendulum Digital Twin</h1>
         <div id="status">Connecting...</div>
         
+        <div id="mode-display">
+          Mode: <span id="current-mode">idle</span>
+        </div>
+        
         <div id="stats">
           <div class="stat-box">
             <span class="stat-label">Angle</span>
@@ -27,9 +31,9 @@
             <span class="stat-label">Velocity</span>
             <span id="velocity-value" class="stat-value">0.0</span>°/s
           </div>
-          <div class="stat-box queue-box">
-            <span class="stat-label">Queue</span>
-            <span id="queue-value" class="stat-value">0</span>
+          <div class="stat-box">
+            <span class="stat-label">Motor</span>
+            <span id="motor-value" class="stat-value">0</span> st/s
           </div>
         </div>
         
@@ -53,25 +57,38 @@
           <h2>Controls</h2>
           
           <div class="control-row">
-            <button id="btn-left" class="control-btn" data-cmd="L">← Left</button>
-            <button id="btn-right" class="control-btn" data-cmd="R">Right →</button>
+            <button id="btn-left" class="control-btn hold-btn" data-mode-start="manual_left" data-mode-stop="idle">
+              ← Left
+            </button>
+            <button id="btn-right" class="control-btn hold-btn" data-mode-start="manual_right" data-mode-stop="idle">
+              Right →
+            </button>
           </div>
           
           <div class="control-row">
-            <button id="btn-oscillate" class="control-btn hold-btn" data-cmd-start="O" data-cmd-stop="S">
+            <button id="btn-oscillate" class="control-btn toggle-btn" data-mode="oscillate">
               ↕ Oscillate
             </button>
           </div>
           
           <div class="control-row">
-            <button id="btn-swingup" class="control-btn hold-btn accent" data-cmd-start="W" data-cmd-stop="S">
+            <button id="btn-swingup" class="control-btn toggle-btn accent" data-mode="swing_up">
               ⚡ Swing Up
             </button>
           </div>
           
           <div class="control-row">
-            <button id="btn-stop" class="control-btn stop-btn" data-cmd="S">
+            <button id="btn-balance" class="control-btn toggle-btn" data-mode="balance">
+              ⚖ Balance
+            </button>
+          </div>
+          
+          <div class="control-row">
+            <button id="btn-stop" class="control-btn stop-btn" data-mode="idle">
               ⏹ Stop
+            </button>
+            <button id="btn-zero" class="control-btn zero-btn">
+              🎯 Zero
             </button>
           </div>
           
@@ -90,18 +107,8 @@
             <h3>Manual Mode</h3>
             <div class="slider-row">
               <label>Speed</label>
-              <input type="range" id="cfg-manual-speed" min="1000" max="50000" value="10000" data-cfg="MS">
-              <span class="slider-value" id="val-manual-speed">10000</span>
-            </div>
-            <div class="slider-row">
-              <label>Accel</label>
-              <input type="range" id="cfg-manual-accel" min="1000" max="50000" value="20000" data-cfg="MA">
-              <span class="slider-value" id="val-manual-accel">20000</span>
-            </div>
-            <div class="slider-row">
-              <label>Step</label>
-              <input type="range" id="cfg-manual-step" min="100" max="10000" value="500" data-cfg="MT">
-              <span class="slider-value" id="val-manual-step">500</span>
+              <input type="range" id="cfg-manual-speed" min="0" max="3000" value="1000" data-cfg="manual_speed">
+              <span class="slider-value" id="val-manual-speed">1000</span>
             </div>
           </div>
           
@@ -109,37 +116,41 @@
             <h3>Oscillate Mode</h3>
             <div class="slider-row">
               <label>Speed</label>
-              <input type="range" id="cfg-osc-speed" min="1000" max="50000" value="5000" data-cfg="OS">
-              <span class="slider-value" id="val-osc-speed">5000</span>
+              <input type="range" id="cfg-osc-speed" min="500" max="20000" value="3000" data-cfg="oscillate_speed">
+              <span class="slider-value" id="val-osc-speed">3000</span>
             </div>
             <div class="slider-row">
-              <label>Accel</label>
-              <input type="range" id="cfg-osc-accel" min="1000" max="50000" value="10000" data-cfg="OA">
-              <span class="slider-value" id="val-osc-accel">10000</span>
-            </div>
-            <div class="slider-row">
-              <label>Amplitude</label>
-              <input type="range" id="cfg-osc-step" min="100" max="10000" value="1000" data-cfg="OT">
-              <span class="slider-value" id="val-osc-step">1000</span>
+              <label>Period (s)</label>
+              <input type="range" id="cfg-osc-period" min="0.5" max="5" step="0.1" value="2" data-cfg="oscillate_period">
+              <span class="slider-value" id="val-osc-period">2.0</span>
             </div>
           </div>
           
           <div class="config-section">
             <h3>Swing-Up Mode</h3>
             <div class="slider-row">
-              <label>Speed</label>
-              <input type="range" id="cfg-swing-speed" min="1000" max="50000" value="20000" data-cfg="WS">
-              <span class="slider-value" id="val-swing-speed">20000</span>
-            </div>
-            <div class="slider-row">
-              <label>Accel</label>
-              <input type="range" id="cfg-swing-accel" min="1000" max="50000" value="15000" data-cfg="WA">
-              <span class="slider-value" id="val-swing-accel">15000</span>
+              <label>Max Speed</label>
+              <input type="range" id="cfg-swing-speed" min="1000" max="30000" value="10000" data-cfg="swingup_max_speed">
+              <span class="slider-value" id="val-swing-speed">10000</span>
             </div>
             <div class="slider-row">
               <label>Kp Gain</label>
-              <input type="range" id="cfg-swing-kp" min="5" max="200" value="40" data-cfg="WK">
-              <span class="slider-value" id="val-swing-kp">40</span>
+              <input type="range" id="cfg-swing-kp" min="1000" max="20000" value="8000" data-cfg="swingup_kp">
+              <span class="slider-value" id="val-swing-kp">8000</span>
+            </div>
+          </div>
+          
+          <div class="config-section">
+            <h3>Balance Mode</h3>
+            <div class="slider-row">
+              <label>Kp</label>
+              <input type="range" id="cfg-bal-kp" min="100" max="2000" value="500" data-cfg="balance_kp">
+              <span class="slider-value" id="val-bal-kp">500</span>
+            </div>
+            <div class="slider-row">
+              <label>Kd</label>
+              <input type="range" id="cfg-bal-kd" min="10" max="200" value="50" data-cfg="balance_kd">
+              <span class="slider-value" id="val-bal-kd">50</span>
             </div>
           </div>
         </div>
