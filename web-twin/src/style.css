@@ -301,6 +301,15 @@ h2 {
   color: var(--text-dim);
 }
 
+.limit-positions {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  margin-top: 4px;
+}
+
 /* Controls */
 #controls {
   display: flex;
@@ -394,6 +403,16 @@ h2 {
 .control-btn.zero-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
+}
+
+.control-btn.home-btn {
+  background: rgba(255, 200, 0, 0.15);
+  border-color: rgba(255, 200, 0, 0.4);
+  color: #ffc800;
+}
+
+.control-btn.home-btn:hover {
+  background: rgba(255, 200, 0, 0.25);
 }
 
 /* Toggle buttons - stay highlighted when mode is active */

@@ -16,9 +16,9 @@ let limitLeft = false;
 let limitRight = false;
 let currentMode = 'idle';
 
-// Position tracking - will be calibrated based on observed min/max
-let minPosition = -5000;
-let maxPosition = 5000;
+// Position tracking - updated from limit switches
+let minPosition = -5000;  // Left limit position
+let maxPosition = 5000;   // Right limit position
 
 // DOM elements
 const container = document.getElementById('pendulum-container')!;
@@ -137,10 +137,6 @@ function updatePositionDisplay(position: number, limLeft: boolean, limRight: boo
     positionValueEl.textContent = position.toString();
   }
   
-  // Auto-calibrate min/max
-  if (position < minPosition) minPosition = position;
-  if (position > maxPosition) maxPosition = position;
-  
   const range = maxPosition - minPosition;
   let normalizedPos = 0.5;
   if (range > 0) {
@@ -165,17 +161,15 @@ function updatePositionDisplay(position: number, limLeft: boolean, limRight: boo
   cart.translation.x = cartX;
   pendulumGroup.translation.x = cartX;
   
-  // Update limit indicators
+  // Update limit indicators (positions are updated from state, not here)
   if (limLeft) {
     limitLeftIndicator.fill = '#ff4444';
-    minPosition = position;
   } else {
     limitLeftIndicator.fill = 'rgba(100, 100, 100, 0.5)';
   }
   
   if (limRight) {
     limitRightIndicator.fill = '#ff4444';
-    maxPosition = position;
   } else {
     limitRightIndicator.fill = 'rgba(100, 100, 100, 0.5)';
   }
@@ -252,6 +246,13 @@ function sendUpload() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'UPLOAD' }));
     console.log('Upload requested');
+  }
+}
+
+function sendHome() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'HOME' }));
+    console.log('Homing requested');
   }
 }
 
@@ -351,6 +352,22 @@ function connect() {
           
           if (data.mode !== undefined) {
             updateModeDisplay(data.mode);
+          }
+          
+          // Update limit positions and use them for visualization
+          if (data.limit_left_pos !== undefined) {
+            const el = document.getElementById('limit-left-pos');
+            if (el) el.textContent = data.limit_left_pos.toString();
+            if (data.limit_left_pos !== 0) {
+              minPosition = data.limit_left_pos;
+            }
+          }
+          if (data.limit_right_pos !== undefined) {
+            const el = document.getElementById('limit-right-pos');
+            if (el) el.textContent = data.limit_right_pos.toString();
+            if (data.limit_right_pos !== 0) {
+              maxPosition = data.limit_right_pos;
+            }
           }
         }
         
@@ -473,6 +490,14 @@ function setupControls() {
   if (zeroBtn) {
     zeroBtn.addEventListener('click', () => {
       sendZero();
+    });
+  }
+  
+  // Home button
+  const homeBtn = document.getElementById('btn-home');
+  if (homeBtn) {
+    homeBtn.addEventListener('click', () => {
+      sendHome();
     });
   }
 }

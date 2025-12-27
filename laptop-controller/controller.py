@@ -46,8 +46,13 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, swing_up, balance
+    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, swing_up, balance, homing
     connected: bool = False
+    # Homing state
+    homing_phase: int = 0          # 0=not homing, 1=going right, 2=going left, 3=going to center
+    limit_left_pos: int = 0        # Position at left limit
+    limit_right_pos: int = 0       # Position at right limit
+    home_speed: int = 2000         # Speed for homing
 
 @dataclass
 class ControlConfig:
@@ -112,7 +117,14 @@ def send_stop():
 def send_zero():
     """Zero the encoder and position"""
     if serial_port and serial_port.is_open:
+        # Adjust limit positions relative to new zero
+        current_pos = state.position
+        if state.limit_left_pos != 0:
+            state.limit_left_pos -= current_pos
+        if state.limit_right_pos != 0:
+            state.limit_right_pos -= current_pos
         serial_port.write(b"Z\n")
+        print(f"Zeroed. Limits now: L={state.limit_left_pos}, R={state.limit_right_pos}", flush=True)
 
 def parse_sensor_data(line: str) -> bool:
     """Parse sensor data from Arduino: A:180.5,P:1000,LL:0,LR:1,V:1234"""
@@ -188,6 +200,9 @@ def compute_velocity() -> int:
     
     elif state.mode == "balance":
         return compute_balance()
+    
+    elif state.mode == "homing":
+        return compute_homing()
     
     return 0
 
@@ -279,6 +294,51 @@ def compute_balance() -> int:
         print("Fell! Back to SWING_UP mode")
     
     return velocity
+
+def compute_homing() -> int:
+    """
+    Homing sequence:
+    Phase 1: Go right until hitting right limit
+    Phase 2: Go left until hitting left limit
+    Phase 3: Go to center and set zero
+    """
+    if state.homing_phase == 1:
+        # Phase 1: Going right to find right limit
+        if state.limit_right:
+            state.limit_right_pos = state.position
+            state.homing_phase = 2
+            print(f"Homing: Found right limit at {state.limit_right_pos}", flush=True)
+            return 0
+        return state.home_speed  # Positive = right
+    
+    elif state.homing_phase == 2:
+        # Phase 2: Going left to find left limit
+        if state.limit_left:
+            state.limit_left_pos = state.position
+            state.homing_phase = 3
+            print(f"Homing: Found left limit at {state.limit_left_pos}", flush=True)
+            return 0
+        return -state.home_speed  # Negative = left
+    
+    elif state.homing_phase == 3:
+        # Phase 3: Go to center
+        center = (state.limit_left_pos + state.limit_right_pos) // 2
+        error = center - state.position
+        
+        if abs(error) < 50:  # Close enough to center
+            send_zero()  # Zero the position
+            state.homing_phase = 0
+            state.mode = "idle"
+            print(f"Homing: Complete! Center at {center}", flush=True)
+            return 0
+        
+        # Move towards center
+        if error > 0:
+            return min(state.home_speed, error * 10)
+        else:
+            return max(-state.home_speed, error * 10)
+    
+    return 0
 
 # ============ ARDUINO UPLOAD ============
 upload_in_progress = False
@@ -389,6 +449,12 @@ async def handle_command(message: str):
         elif cmd_type == "ZERO":
             send_zero()
         
+        elif cmd_type == "HOME":
+            # Start homing sequence
+            state.mode = "homing"
+            state.homing_phase = 1
+            print("Homing: Starting sequence...", flush=True)
+        
         elif cmd_type == "CONFIG":
             # Update configuration
             if "manual_speed" in cmd:
@@ -437,6 +503,8 @@ async def broadcast_state():
         "velocity": state.velocity,
         "limit_left": state.limit_left,
         "limit_right": state.limit_right,
+        "limit_left_pos": state.limit_left_pos,
+        "limit_right_pos": state.limit_right_pos,
         "mode": state.mode,
         "connected": state.connected
     })
@@ -483,6 +551,12 @@ async def control_loop():
         if abs(velocity - last_printed_velocity) > 100:
             print(f"Mode: {state.mode}, Velocity: {velocity}", flush=True)
             last_printed_velocity = velocity
+        
+        # Update limit positions when switches are hit
+        if state.limit_left:
+            state.limit_left_pos = state.position
+        if state.limit_right:
+            state.limit_right_pos = state.position
         
         # Send velocity in thread pool (non-blocking)
         await loop.run_in_executor(executor, send_velocity, velocity)
