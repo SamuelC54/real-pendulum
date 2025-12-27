@@ -11,9 +11,9 @@
 #include <AccelStepper.h>
 
 // ============ PIN CONFIGURATION ============
-// Encoder
-constexpr int ENCODER_CLK = 2;    // Must be interrupt pin
-constexpr int ENCODER_DT  = 8;
+// Encoder (both must be interrupt pins for full quadrature)
+constexpr int ENCODER_CLK = 2;    // Interrupt pin
+constexpr int ENCODER_DT  = 3;    // Interrupt pin
 
 // Stepper (DM542 driver)
 constexpr int STEP_PIN = 9;
@@ -28,8 +28,8 @@ constexpr long MAX_SPEED = 50000;       // Max steps/second for DM542
 constexpr long ACCELERATION = 100000;   // Steps/second² - high for responsive velocity changes
 
 // ============ ENCODER CONFIGURATION ============
-constexpr int ENCODER_PPR = 600;        // Pulses per revolution
-constexpr float DEGREES_PER_PULSE = 360.0f / (ENCODER_PPR * 4);  // Quadrature = 4x
+constexpr int ENCODER_PPR = 20;        // Pulses per revolution
+constexpr float DEGREES_PER_PULSE = 360.0f / (ENCODER_PPR * 4);  // 4x quadrature = 4.5° per count
 
 // ============ COMMUNICATION ============
 constexpr unsigned long BAUD_RATE = 115200;
@@ -67,10 +67,11 @@ void encoderISR() {
 void setup() {
   Serial.begin(BAUD_RATE);
   
-  // Encoder pins
+  // Encoder pins (both with interrupts for full quadrature)
   pinMode(ENCODER_CLK, INPUT_PULLUP);
   pinMode(ENCODER_DT, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), encoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), encoderISR, CHANGE);
   
   // Initialize encoder state
   int MSB = digitalRead(ENCODER_CLK);
