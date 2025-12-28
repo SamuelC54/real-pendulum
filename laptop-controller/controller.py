@@ -8,6 +8,10 @@ Communication:
 - Serial to Arduino: Velocity commands "V1234\n"
 - Serial from Arduino: "A:180.5,P:1000,LL:0,LR:1,V:1234\n"
 - WebSocket to Web UI: JSON state updates
+
+Usage:
+  python controller.py         # Connect to real Arduino
+  python controller.py --sim   # Use physics simulator (no hardware needed)
 """
 
 import serial
@@ -18,11 +22,15 @@ import time
 import math
 import subprocess
 import os
+import sys
 import threading
 from dataclasses import dataclass, asdict
 from typing import Optional
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+
+# Check for simulator mode
+SIMULATOR_MODE = "--sim" in sys.argv or "-s" in sys.argv
 
 # ============ CONFIGURATION ============
 SERIAL_PORT = "COM3"
@@ -87,6 +95,15 @@ last_angle_time = time.perf_counter()
 # ============ SERIAL COMMUNICATION ============
 def connect_serial():
     global serial_port
+    
+    if SIMULATOR_MODE:
+        # Use physics simulator instead of real serial
+        from simulator import PendulumSimulator
+        serial_port = PendulumSimulator()
+        state.connected = True
+        print("Connected to SIMULATOR")
+        return True
+    
     try:
         serial_port = serial.Serial(SERIAL_PORT, BAUD, timeout=0.01, write_timeout=0.1)
         state.connected = True
@@ -383,6 +400,10 @@ def upload_arduino_code():
     """Upload Arduino code using arduino-cli (runs in thread)"""
     global serial_port
     
+    if SIMULATOR_MODE:
+        print("Upload skipped - running in simulator mode", flush=True)
+        return True, "Upload skipped (simulator mode)"
+    
     print("Starting Arduino upload...", flush=True)
     
     # Close serial connection
@@ -594,9 +615,11 @@ async def main():
     """Main entry point"""
     print("=" * 50)
     print("Inverted Pendulum - Velocity Streaming Controller")
+    if SIMULATOR_MODE:
+        print(">>> SIMULATOR MODE - No hardware required <<<")
     print("=" * 50, flush=True)
     
-    # Connect to Arduino
+    # Connect to Arduino or simulator
     if not connect_serial():
         print("Warning: Could not connect to Arduino", flush=True)
     
