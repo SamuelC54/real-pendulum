@@ -415,6 +415,22 @@ h2 {
   background: rgba(255, 200, 0, 0.25);
 }
 
+.control-btn.neat-btn {
+  background: rgba(200, 100, 255, 0.15);
+  border-color: rgba(200, 100, 255, 0.4);
+  color: #c864ff;
+}
+
+.control-btn.neat-btn:hover {
+  background: rgba(200, 100, 255, 0.25);
+}
+
+.control-btn.neat-btn.active {
+  background: rgba(200, 100, 255, 0.4);
+  border-color: #c864ff;
+  box-shadow: 0 0 15px rgba(200, 100, 255, 0.5);
+}
+
 /* Toggle buttons - stay highlighted when mode is active */
 .control-btn.toggle-btn {
   background: rgba(255, 255, 255, 0.06);

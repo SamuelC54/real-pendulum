@@ -2,6 +2,7 @@ pyserial
 keyboard
 watchdog
 websockets
+neat-python==0.92
 
 
 

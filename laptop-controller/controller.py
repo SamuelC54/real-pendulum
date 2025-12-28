@@ -32,6 +32,9 @@ from concurrent.futures import ThreadPoolExecutor
 # Check for simulator mode
 SIMULATOR_MODE = "--sim" in sys.argv or "-s" in sys.argv
 
+# NEAT neural network for balance mode
+neat_network = None  # Loaded on startup if available
+
 # ============ CONFIGURATION ============
 SERIAL_PORT = "COM3"
 BAUD = 115200
@@ -80,6 +83,9 @@ class ControlConfig:
     balance_kp: float = 500.0
     balance_kd: float = 50.0
     balance_threshold: float = 30.0  # degrees from vertical to switch to balance
+    
+    # NEAT balance mode
+    neat_max_speed: int = 8000  # Max speed for NEAT controller
 
 # Global state
 state = PendulumState()
@@ -91,6 +97,59 @@ executor = ThreadPoolExecutor(max_workers=1)  # For serial I/O
 # For angular velocity calculation
 last_angle = 180.0
 last_angle_time = time.perf_counter()
+
+# ============ NEAT NETWORK ============
+def load_neat_network():
+    """Load the trained NEAT network if available"""
+    global neat_network
+    
+    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
+    
+    if not os.path.exists(genome_path):
+        print("NEAT: No trained network found (best_genome.pkl)")
+        return False
+    
+    if not os.path.exists(config_path):
+        print("NEAT: Config file not found (neat_config.txt)")
+        return False
+    
+    try:
+        import neat
+        import pickle
+        
+        # Load NEAT config
+        neat_config = neat.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path
+        )
+        
+        # Load best genome
+        with open(genome_path, 'rb') as f:
+            genome = pickle.load(f)
+        
+        # Create network
+        neat_network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
+        print(f"NEAT: Loaded trained network (fitness: {genome.fitness:.1f})")
+        return True
+        
+    except Exception as e:
+        print(f"NEAT: Failed to load network: {e}")
+        return False
+
+def normalize_angle_for_neat(angle_deg):
+    """Normalize angle so 180° (upright) = 0, range [-1, 1]"""
+    # In our system: 0° = down, 180° = up
+    # We want: 180° = 0 (balanced), 0° or 360° = ±1 (fallen)
+    diff = angle_deg - 180.0
+    if diff > 180:
+        diff -= 360
+    elif diff < -180:
+        diff += 360
+    return diff / 180.0
 
 # ============ SERIAL COMMUNICATION ============
 def connect_serial():
@@ -233,6 +292,9 @@ def compute_velocity() -> int:
     elif state.mode == "balance":
         return compute_balance()
     
+    elif state.mode == "neat_balance":
+        return compute_neat_balance()
+    
     elif state.mode == "homing":
         return compute_homing()
     
@@ -324,6 +386,63 @@ def compute_balance() -> int:
     if angle_from_vertical > 45:  # Fallen past 45 degrees
         state.mode = "swing_up"
         print("Fell! Back to SWING_UP mode")
+    
+    return velocity
+
+def compute_neat_balance() -> int:
+    """
+    Use trained NEAT neural network to balance the pendulum.
+    
+    Network inputs (4):
+      - Normalized angle from upright (180° = 0, 0° = ±1)
+      - Angular velocity (normalized)
+      - Cart position (normalized)
+      - Cart velocity (normalized)
+    
+    Network output (1):
+      - Cart velocity (-1 to 1, scaled by neat_max_speed)
+    """
+    if neat_network is None:
+        print("NEAT network not loaded! Falling back to PD balance.")
+        state.mode = "balance"
+        return compute_balance()
+    
+    # Get rail limits for normalization
+    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
+    rail_length = rail_half * 2
+    
+    # Distance to limits (0 = at limit, 1 = at opposite limit)
+    limit_left = state.limit_left_pos if state.limit_left_pos != 0 else -rail_half
+    limit_right = state.limit_right_pos if state.limit_right_pos != 0 else rail_half
+    dist_to_left = (state.position - limit_left) / rail_length
+    dist_to_right = (limit_right - state.position) / rail_length
+    
+    # Clamp distances to [0, 1]
+    dist_to_left = max(0.0, min(1.0, dist_to_left))
+    dist_to_right = max(0.0, min(1.0, dist_to_right))
+    
+    # Prepare inputs for neural network (6 inputs)
+    inputs = [
+        normalize_angle_for_neat(state.angle),           # Angle from upright
+        state.angular_velocity / 500.0,                  # Angular velocity (normalized)
+        state.position / rail_half,                      # Position (normalized)
+        state.velocity / config.neat_max_speed,          # Velocity (normalized)
+        dist_to_left,                                    # Distance to left limit
+        dist_to_right,                                   # Distance to right limit
+    ]
+    
+    # Get network output
+    output = neat_network.activate(inputs)
+    velocity = int(output[0] * config.neat_max_speed)
+    
+    # Clamp to max speed
+    velocity = max(-config.neat_max_speed, min(config.neat_max_speed, velocity))
+    
+    # Respect limits
+    if state.limit_left and velocity < 0:
+        velocity = 0
+    if state.limit_right and velocity > 0:
+        velocity = 0
     
     return velocity
 
@@ -472,7 +591,7 @@ async def handle_command(message: str):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "swing_up", "balance"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "swing_up", "balance", "neat_balance"]:
                 state.mode = new_mode
                 print(f"Mode changed to: {new_mode}")
                 if new_mode == "idle":
@@ -618,6 +737,9 @@ async def main():
     if SIMULATOR_MODE:
         print(">>> SIMULATOR MODE - No hardware required <<<")
     print("=" * 50, flush=True)
+    
+    # Load NEAT network if available
+    load_neat_network()
     
     # Connect to Arduino or simulator
     if not connect_serial():
