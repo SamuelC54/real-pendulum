@@ -85,7 +85,7 @@ class ControlConfig:
     balance_threshold: float = 30.0  # degrees from vertical to switch to balance
     
     # NEAT balance mode
-    neat_max_speed: int = 8000  # Max speed for NEAT controller
+    neat_max_speed: int = 20000  # Max speed for NEAT controller
 
 # Global state
 state = PendulumState()

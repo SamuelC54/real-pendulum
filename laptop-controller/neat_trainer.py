@@ -28,7 +28,7 @@ import time
 from simulator import PendulumSimulator, SimulatorConfig
 
 # Training parameters
-MAX_SPEED = 8000           # Max cart velocity for training
+MAX_SPEED = 20000          # Max cart velocity for training
 SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
