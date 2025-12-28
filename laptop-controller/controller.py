@@ -88,7 +88,7 @@ last_angle_time = time.perf_counter()
 def connect_serial():
     global serial_port
     try:
-        serial_port = serial.Serial(SERIAL_PORT, BAUD, timeout=0.01)
+        serial_port = serial.Serial(SERIAL_PORT, BAUD, timeout=0.01, write_timeout=0.1)
         state.connected = True
         print(f"Connected to {SERIAL_PORT}")
         return True
@@ -102,29 +102,44 @@ last_debug_velocity = [0]  # Use list to allow modification in nested function
 def send_velocity(velocity: int):
     """Send velocity command to Arduino"""
     if serial_port and serial_port.is_open:
-        cmd = f"V{velocity}\n"
-        serial_port.write(cmd.encode())
-        # Debug: print when velocity changes significantly
-        if abs(velocity - last_debug_velocity[0]) > 100:
-            print(f"Sending velocity: {velocity}", flush=True)
-            last_debug_velocity[0] = velocity
+        try:
+            cmd = f"V{velocity}\n"
+            serial_port.write(cmd.encode())
+            # Debug: print when velocity changes significantly
+            if abs(velocity - last_debug_velocity[0]) > 100:
+                print(f"Sending velocity: {velocity}", flush=True)
+                last_debug_velocity[0] = velocity
+        except serial.SerialTimeoutException:
+            pass  # Ignore write timeouts, next command will resync
+        except Exception as e:
+            print(f"Send error: {e}", flush=True)
 
 def send_stop():
     """Send stop command"""
     if serial_port and serial_port.is_open:
-        serial_port.write(b"S\n")
+        try:
+            serial_port.write(b"S\n")
+        except serial.SerialTimeoutException:
+            pass
+        except Exception as e:
+            print(f"Send error: {e}", flush=True)
 
 def send_zero():
     """Zero the encoder and position"""
     if serial_port and serial_port.is_open:
-        # Adjust limit positions relative to new zero
-        current_pos = state.position
-        if state.limit_left_pos != 0:
-            state.limit_left_pos -= current_pos
-        if state.limit_right_pos != 0:
-            state.limit_right_pos -= current_pos
-        serial_port.write(b"Z\n")
-        print(f"Zeroed. Limits now: L={state.limit_left_pos}, R={state.limit_right_pos}", flush=True)
+        try:
+            # Adjust limit positions relative to new zero
+            current_pos = state.position
+            if state.limit_left_pos != 0:
+                state.limit_left_pos -= current_pos
+            if state.limit_right_pos != 0:
+                state.limit_right_pos -= current_pos
+            serial_port.write(b"Z\n")
+            print(f"Zeroed. Limits now: L={state.limit_left_pos}, R={state.limit_right_pos}", flush=True)
+        except serial.SerialTimeoutException:
+            pass
+        except Exception as e:
+            print(f"Send error: {e}", flush=True)
 
 def parse_sensor_data(line: str) -> bool:
     """Parse sensor data from Arduino: A:180.5,P:1000,LL:0,LR:1,V:1234"""
