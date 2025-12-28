@@ -28,7 +28,7 @@ import time
 from simulator import PendulumSimulator, SimulatorConfig
 
 # Training parameters
-MAX_SPEED = 20000          # Max cart velocity for training
+MAX_SPEED = 100000          # Max cart velocity for training
 SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
@@ -100,6 +100,7 @@ def evaluate_genome(genome, config, visualize=False):
     rail_length = sim_config.rail_length_steps
     
     fitness = 0.0
+    reached_top = False  # Track if pendulum reached near 180°
     
     for step in range(SIMULATION_STEPS):
         # Get current state as neural network inputs
@@ -178,6 +179,15 @@ def evaluate_genome(genome, config, visualize=False):
         # --- Fitness calculation ---
         angle_deg = math.degrees(pendulum_angle)
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
+        
+        # Check if reached near 180° (within ±3°, which is ~0.017 normalized)
+        if angle_from_up < 0.017:  # Within ~3° of 180°
+            reached_top = True
+        
+        # If reached top and fell back down (past 90° from top), reset score
+        if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
+            fitness = 0.0
+            reached_top = False  # Reset to allow another attempt
         
         # Exponential reward: more points when closer to 180°
         # closeness = 1 when at 180°, 0 when at 0°
