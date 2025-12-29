@@ -57,7 +57,7 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, neat_balance, homing
+    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, neat_swing_up_only, neat_balance_only, homing
     connected: bool = False
     # Homing state
     homing_phase: int = 0          # 0=not homing, 1=going right, 2=going left, 3=going to center
@@ -99,15 +99,15 @@ def get_neat_config():
     """Read current NEAT config values from files"""
     global neat_config_values
     
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
-    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
+    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
     
     pop_size = 1000
     fitness_threshold = 2000
     max_speed = 100000
     sim_steps = 2000
     
-    # Read pop_size and fitness_threshold from neat_config.txt
+    # Read pop_size and fitness_threshold from neat_swing_up_config.txt
     try:
         with open(config_path, 'r') as f:
             for line in f:
@@ -121,9 +121,9 @@ def get_neat_config():
                     if len(parts) == 2:
                         fitness_threshold = float(parts[1].strip())
     except Exception as e:
-        print(f"Error reading neat_config.txt: {e}")
+        print(f"Error reading neat_swing_up_config.txt: {e}")
     
-    # Read MAX_SPEED and SIMULATION_STEPS from neat_trainer.py
+    # Read MAX_SPEED and SIMULATION_STEPS from neat_swing_up_trainer.py
     try:
         with open(trainer_path, 'r') as f:
             for line in f:
@@ -140,7 +140,7 @@ def get_neat_config():
                         value = parts[1].split('#')[0].strip()
                         sim_steps = int(value)
     except Exception as e:
-        print(f"Error reading neat_trainer.py: {e}")
+        print(f"Error reading neat_swing_up_trainer.py: {e}")
     
     neat_config_values = {
         "pop_size": pop_size,
@@ -157,8 +157,8 @@ def load_neat_network():
     """Load the trained NEAT network if available"""
     global neat_network, best_genome_info
     
-    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
+    genome_path = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
     
     if not os.path.exists(genome_path):
         print("NEAT: No trained network found (best_genome.pkl)")
@@ -166,7 +166,7 @@ def load_neat_network():
         return False
     
     if not os.path.exists(config_path):
-        print("NEAT: Config file not found (neat_config.txt)")
+        print("NEAT: Config file not found (neat_swing_up_config.txt)")
         best_genome_info = None
         return False
     
@@ -424,8 +424,8 @@ def compute_velocity() -> int:
     elif state.mode == "oscillate":
         return compute_oscillate()
     
-    elif state.mode == "neat_balance":
-        return compute_neat_balance()
+    elif state.mode == "neat_swing_up_only":
+        return compute_neat_swing_up_only()
     
     elif state.mode == "neat_balance_only":
         return compute_neat_balance_only()
@@ -449,7 +449,7 @@ def compute_oscillate() -> int:
     
     return velocity
 
-def compute_neat_balance() -> int:
+def compute_neat_swing_up_only() -> int:
     """
     Use trained NEAT neural network to balance the pendulum.
     
@@ -616,7 +616,7 @@ async def start_training():
     
     # Clear old checkpoints and status file
     import shutil
-    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_checkpoints')
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
     
     if os.path.exists(checkpoint_dir):
         shutil.rmtree(checkpoint_dir)
@@ -624,7 +624,7 @@ async def start_training():
         os.remove(TRAINING_STATUS_FILE)
     
     # Start training process (swing-up trainer)
-    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
     training_process = subprocess.Popen(
         [sys.executable, trainer_path],
         cwd=os.path.dirname(__file__)
@@ -705,8 +705,8 @@ async def update_neat_config(cmd: dict):
     fitness_threshold = cmd.get('fitness_threshold', 2000)
     sim_steps = cmd.get('sim_steps', 2000)
     
-    # Update neat_config.txt
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
+    # Update neat_swing_up_config.txt
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
     
     try:
         with open(config_path, 'r') as f:
@@ -724,8 +724,8 @@ async def update_neat_config(cmd: dict):
         with open(config_path, 'w') as f:
             f.writelines(new_lines)
         
-        # Update neat_trainer.py constants (MAX_SPEED and SIMULATION_STEPS)
-        trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+        # Update neat_swing_up_trainer.py constants (MAX_SPEED and SIMULATION_STEPS)
+        trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
         with open(trainer_path, 'r') as f:
             trainer_content = f.read()
         
@@ -825,7 +825,7 @@ async def handle_command(message: str):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_balance", "neat_balance_only"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_swing_up_only", "neat_balance_only"]:
                 # Reset pendulum to upright in simulator when entering balance-only mode
                 if new_mode == "neat_balance_only" and SIMULATOR_MODE and serial_port:
                     serial_port.set_pendulum_upright()

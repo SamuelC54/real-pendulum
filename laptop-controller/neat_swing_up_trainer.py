@@ -1,8 +1,13 @@
 """
-NEAT-Python Trainer for Inverted Pendulum Balancing
+NEAT-Python Trainer for Inverted Pendulum SWING-UP
 
-Uses neuroevolution to train a neural network that keeps the pendulum
-balanced upright (around 180°) by controlling cart velocity.
+Trains a neural network to swing the pendulum from bottom (0°) to top (180°)
+using the least amount of cart velocity/energy possible.
+
+Fitness rewards:
+  - Reaching 180° (upright position)
+  - Using minimal cart velocity during the swing-up
+  - Reaching top quickly
 
 Inputs (4):
   - Angle from upright (normalized: 180° = 0, 0°/360° = ±1)
@@ -14,9 +19,9 @@ Output (1):
   - Cart velocity command (-1 to 1, scaled to max speed)
 
 Usage:
-  python neat_trainer.py              # Train new network
-  python neat_trainer.py --continue   # Continue from checkpoint
-  python neat_trainer.py --test       # Test best genome
+  python neat_swing_up_trainer.py              # Train new network
+  python neat_swing_up_trainer.py --continue   # Continue from checkpoint
+  python neat_swing_up_trainer.py --test       # Test best genome
 """
 
 import os
@@ -57,9 +62,9 @@ SIMULATION_STEPS = 10000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
 # Paths
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_checkpoints')
-BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
+BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
 
 
 def normalize_angle(angle_deg):
@@ -90,35 +95,25 @@ def create_fast_simulator():
 eval_count = 0  # Global counter for logging
 
 def evaluate_genome(genome, config, visualize=False):
-    global eval_count
     """
-    Evaluate a single genome by running it in the simulator.
+    Evaluate a genome for SWING-UP task.
     
-    Fitness:
-    - Exponential reward based on closeness to 180° (upright)
-    - Big penalty for touching limits
+    Goal: Swing pendulum from 0° (down) to 180° (up) with minimal velocity usage.
     
-    Inputs (4):
-    - Angle from upright (normalized: 180° = 0, 0°/360° = ±1)
-    - Angular velocity (normalized)
-    - Cart position (normalized)
-    - Cart velocity (normalized)
+    Fitness rewards:
+    - Big bonus for reaching 180° (upright)
+    - Bonus for reaching top quickly (time bonus)
+    - Penalty for using high cart velocities
     """
-    # Create neural network from genome
     net = neat.nn.FeedForwardNetwork.create(genome, config)
-    
-    # Create simulator with fast settings
     sim_config = create_fast_simulator()
     
     # State variables
     cart_position = 0.0
     cart_velocity = 0.0
-    target_velocity = 0.0
     
-    # # Start pendulum at BOTTOM (0°) - must swing up!
-    # pendulum_angle = math.radians(hash(str(genome.key)) % 10 - 5)  # Near 0° (down)
-    # Start pendulum at random angle (0-360°)
-    pendulum_angle = math.radians(random.uniform(0, 360))
+    # Start pendulum at BOTTOM (0°) with small random offset
+    pendulum_angle = math.radians(random.uniform(-5, 5))  # Near 0° (down)
     pendulum_velocity = 0.0
     
     # Limits
@@ -126,20 +121,14 @@ def evaluate_genome(genome, config, visualize=False):
     limit_right = sim_config.rail_length_steps / 2
     rail_length = sim_config.rail_length_steps
     
-    fitness = 0.0
-    reached_top = False  # Track if pendulum reached near 180°
-    net_rotation = 0.0  # Track net rotation (positive = clockwise, negative = counter)
-    max_angular_velocity = 0.0  # Track peak angular velocity
-    time_upright = 0  # Current streak of being upright
-    max_time_upright = 0  # Longest streak of being upright
+    # Tracking variables
+    max_velocity_used = 0.0  # Track maximum velocity used
+    total_velocity_used = 0.0  # Track cumulative velocity usage
+    reached_top = False
+    step_reached_top = SIMULATION_STEPS  # When did it reach top
     
     for step in range(SIMULATION_STEPS):
-        # Get current state as neural network inputs
         angle_deg = math.degrees(pendulum_angle) % 360
-        
-        # Distance to limits (0 = at limit, 1 = at opposite limit)
-        dist_to_left = (cart_position - limit_left) / rail_length
-        dist_to_right = (limit_right - cart_position) / rail_length
         
         inputs = [
             normalize_angle(angle_deg),          # Angle from upright (-1 to 1)
@@ -148,15 +137,18 @@ def evaluate_genome(genome, config, visualize=False):
             cart_velocity / MAX_SPEED,           # Cart velocity (normalized)
         ]
         
-        # Get network output
         output = net.activate(inputs)
         target_velocity = output[0] * MAX_SPEED
         target_velocity = max(-MAX_SPEED, min(MAX_SPEED, target_velocity))
         
+        # Track velocity usage
+        total_velocity_used += abs(target_velocity)
+        if abs(target_velocity) > max_velocity_used:
+            max_velocity_used = abs(target_velocity)
+        
         # --- Physics simulation ---
         dt = EVAL_DT
         
-        # Cart dynamics
         velocity_error = target_velocity - cart_velocity
         max_accel_change = sim_config.motor_accel * dt
         
@@ -205,66 +197,40 @@ def evaluate_genome(genome, config, visualize=False):
         while pendulum_angle >= 2 * math.pi:
             pendulum_angle -= 2 * math.pi
         
-        # --- Fitness calculation ---
+        # Check if reached top (within 10° of 180°)
         angle_deg = math.degrees(pendulum_angle)
+        angle_from_up = abs(normalize_angle(angle_deg))
         
-        # Track net rotation using angular velocity
-        # This properly accounts for direction and doesn't double-count oscillations
-        net_rotation += pendulum_velocity * dt
-        
-        # Track max angular velocity
-        if abs(pendulum_velocity) > max_angular_velocity:
-            max_angular_velocity = abs(pendulum_velocity)
-        
-        angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
-        
-        # Check if reached near 180° 
-        if angle_from_up < 0.5:  # Within 10° of 180°
+        if angle_from_up < 0.056 and not reached_top:  # Within ~10° of 180°
             reached_top = True
+            step_reached_top = step
         
-        # If reached top and fell back down (past 90° from top), reset score
-        if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
-            fitness = 0
-            reached_top = False  # Reset to allow another attempt
-        
-        # Exponential reward: more points when closer to 180°
-        # closeness = 1 when at 180°, 0 when at 0°
-        closeness = 1.0 - angle_from_up
-        reward = closeness ** 2  # Exponential (squared) - max 1.0 when at 180°
-        fitness += reward
-
-        # time continuously upright
-        if angle_from_up < 0.5:  # 90°/180° ≈ 0.5
-            time_upright += 1
-            max_time_upright = max(max_time_upright, time_upright)
-        else:
-            time_upright = 0
-        
-        # Big penalty for hitting limits
+        # Stop early if hit limit
         if hit_limit:
-            fitness -= 10.0
-
-        # # Penalty for excessive angular velocity (over 900°/s)
-        # angular_vel_deg = abs(math.degrees(pendulum_velocity))
-        # if angular_vel_deg > 900:
-        #     fitness -= 1 * (angular_vel_deg - 900)  # Penalty scales with excess
-
-        # Penalty for high cart velocity (encourages smooth control)
-        # fitness -= 0.00001 * abs(cart_velocity)
+            break
     
-    # # Count full rotations (2*pi radians = 1 full loop)
-    # full_rotations = abs(net_rotation) / (2 * math.pi)
+    # --- Calculate fitness ---
+    fitness = 0.0
     
-    # # Penalty for doing more than 2 full rotations in either direction
-    # if full_rotations > 2:
-    #     fitness -= 5000.0 * (full_rotations - 2)
-    
-    # Big bonus for longest continuous time upright
-    fitness += max_time_upright * 10.0  # 10x multiplier for sustained balance
-    
-    # Debug: log rotation and max velocity
-    # max_vel_deg = math.degrees(max_angular_velocity)
-    # print(f"Genome {genome.key}: rotations={full_rotations:.1f}, max_vel={max_vel_deg:.0f}°/s, fitness={fitness:.1f}")
+    if reached_top:
+        # Base reward for reaching top
+        fitness += 1000.0
+        
+        # Time bonus: faster is better (max 500 bonus if reached in first 100 steps)
+        time_bonus = max(0, 500 - step_reached_top * 0.5)
+        fitness += time_bonus
+        
+        # Efficiency bonus: lower max velocity = more points
+        # If max velocity was only 2000, get 300 bonus. If it was 9000 (max), get 0.
+        efficiency_bonus = max(0, 300 * (1 - max_velocity_used / MAX_SPEED))
+        fitness += efficiency_bonus
+    else:
+        # Didn't reach top - give partial credit based on highest angle reached
+        # Check final angle
+        final_angle_deg = math.degrees(pendulum_angle) % 360
+        angle_from_up = abs(normalize_angle(final_angle_deg))
+        closeness = 1.0 - angle_from_up  # 0 at bottom, 1 at top
+        fitness += closeness * 100  # Up to 100 points for getting close
     
     return fitness
 
