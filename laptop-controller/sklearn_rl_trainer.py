@@ -21,6 +21,7 @@ Usage:
 import os
 import sys
 import math
+import json
 import pickle
 import random
 import time
@@ -28,17 +29,19 @@ import numpy as np
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 from simulator import PendulumSimulator
-from trainer_utils import create_fast_simulator, normalize_angle, load_training_params
+from trainer_utils import create_fast_simulator, normalize_angle, load_training_params, send_training_update
 
 # Paths
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'sklearn_rl_model.pkl')
 SCALER_PATH = os.path.join(os.path.dirname(__file__), 'sklearn_rl_scaler.pkl')
 TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
+TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
+STOP_TRAINING_FILE = os.path.join(os.path.dirname(__file__), 'stop_training.flag')
 
-# Training parameters
-_params = load_training_params("balance")
-MAX_SPEED = _params.get('max_speed', 9000)
-SIMULATION_STEPS = _params.get('sim_steps', 5000)
+# Training parameters (defaults, can be overridden by config)
+MAX_SPEED = 9000
+SIMULATION_STEPS = 5000
+EPISODES = 1000
 EVAL_DT = 0.02  # Evaluation timestep (50Hz)
 
 # Q-Learning parameters
@@ -269,28 +272,76 @@ def train_episode(agent, episode_num):
     return total_reward, step + 1
 
 
+def load_sklearn_config():
+    """Load sklearn training config from JSON file"""
+    global MAX_SPEED, SIMULATION_STEPS, EPISODES
+    
+    try:
+        if os.path.exists(TRAINING_CONFIG_FILE):
+            with open(TRAINING_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                sklearn_config = config.get('sklearn', {})
+                MAX_SPEED = sklearn_config.get('max_speed', MAX_SPEED)
+                SIMULATION_STEPS = sklearn_config.get('sim_steps', SIMULATION_STEPS)
+                EPISODES = sklearn_config.get('episodes', EPISODES)
+    except Exception as e:
+        print(f"Warning: Could not load sklearn config: {e}")
+
 def train():
     """Train the Q-learning agent"""
+    global MAX_SPEED, SIMULATION_STEPS, EPISODES
+    
+    # Load config
+    load_sklearn_config()
+    
+    # Clear stop flag
+    if os.path.exists(STOP_TRAINING_FILE):
+        os.remove(STOP_TRAINING_FILE)
+    
     agent = QLearningAgent(state_size=4, action_size=1)
     
     print("Starting Q-Learning training with sklearn MLPRegressor...")
     print(f"Network architecture: 4 inputs -> {HIDDEN_LAYER_SIZES} -> 1 output")
+    print(f"Episodes: {EPISODES}, Max Speed: {MAX_SPEED}, Sim Steps: {SIMULATION_STEPS}")
     
     best_reward = float('-inf')
-    episodes = 1000
+    episode = 0
     
-    for episode in range(episodes):
+    while True:
+        # Check for stop flag
+        if os.path.exists(STOP_TRAINING_FILE):
+            print("Stop flag detected, stopping training...")
+            break
+        
         reward, steps = train_episode(agent, episode)
         
         if reward > best_reward:
             best_reward = reward
             agent.save(MODEL_PATH, SCALER_PATH)
+            print(f"New best reward: {best_reward:.1f}, saved model")
+        
+        # Send training update
+        send_training_update({
+            'trainer': 'sklearn',
+            'episode': episode + 1,
+            'best_reward': best_reward,
+            'last_reward': reward,
+            'exploration_rate': agent.exploration_rate,
+            'steps': steps
+        })
         
         if (episode + 1) % 10 == 0:
-            print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.1f}, Steps: {steps}, "
-                  f"Exploration: {agent.exploration_rate:.3f}")
+            print(f"Episode {episode + 1}, Reward: {reward:.1f}, Steps: {steps}, "
+                  f"Best: {best_reward:.1f}, Exploration: {agent.exploration_rate:.3f}")
+        
+        episode += 1
+        
+        # Check if we've reached the episode limit
+        if episode >= EPISODES:
+            print(f"Reached episode limit ({EPISODES}), continuing indefinitely...")
+            EPISODES = float('inf')  # Continue indefinitely
     
-    print(f"Training complete! Best reward: {best_reward:.1f}")
+    print(f"Training stopped. Best reward: {best_reward:.1f}")
     agent.save(MODEL_PATH, SCALER_PATH)
 
 

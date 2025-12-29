@@ -282,7 +282,7 @@ function showUploadStatus(message: string, type: 'uploading' | 'success' | 'erro
 
 // Training progress display
 let trainingActive = false;
-let selectedTrainingType: 'swing-up' | 'balance' = 'swing-up';
+let selectedTrainingType: 'swing-up' | 'balance' | 'sklearn' = 'swing-up';
 
 // Store genome info for both training types
 let bestGenomeSwingUp: any = null;
@@ -290,7 +290,12 @@ let bestGenomeBalance: any = null;
 
 function sendStartTraining() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const type = selectedTrainingType === 'swing-up' ? 'START_TRAINING' : 'START_BALANCE_TRAINING';
+    let type = 'START_TRAINING';
+    if (selectedTrainingType === 'balance') {
+      type = 'START_BALANCE_TRAINING';
+    } else if (selectedTrainingType === 'sklearn') {
+      type = 'START_SKLEARN_TRAINING';
+    }
     ws.send(JSON.stringify({ type }));
   }
 }
@@ -338,11 +343,21 @@ function setupTabs() {
   const tabs = document.querySelectorAll('.neat-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance';
+      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance' | 'sklearn';
       if (tabType) {
         selectedTrainingType = tabType;
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
+        
+        // Show/hide content sections
+        const neatContent = document.getElementById('neat-training-content');
+        const sklearnContent = document.getElementById('sklearn-training-content');
+        if (neatContent) {
+          neatContent.style.display = (tabType === 'swing-up' || tabType === 'balance') ? 'block' : 'none';
+        }
+        if (sklearnContent) {
+          sklearnContent.style.display = tabType === 'sklearn' ? 'block' : 'none';
+        }
         
         // Show/hide balance-specific perturbation config
         const pertConfig = document.getElementById('balance-perturbation-config');
@@ -350,12 +365,14 @@ function setupTabs() {
           pertConfig.style.display = tabType === 'balance' ? 'block' : 'none';
         }
         
-        // Update best genome display for the selected tab
-        const currentGenome = tabType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
-        updateBestGenomeDisplay(currentGenome);
+        // Update best genome display for the selected tab (only for NEAT)
+        if (tabType !== 'sklearn') {
+          const currentGenome = tabType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
+          updateBestGenomeDisplay(currentGenome);
+        }
         
         // Request config for this trainer type
-        if (ws && ws.readyState === WebSocket.OPEN) {
+        if (ws && ws.readyState === WebSocket.OPEN && tabType !== 'sklearn') {
           ws.send(JSON.stringify({ type: 'GET_NEAT_CONFIG', trainer: tabType }));
         }
       }
@@ -437,7 +454,13 @@ function updateTrainingDisplay(data: any) {
   if (startBtn) startBtn.style.display = 'none';
   if (stopBtn) stopBtn.style.display = 'block';
   
-  // Update stats
+  // Update based on training type
+  if (data.trainer === 'sklearn' || selectedTrainingType === 'sklearn') {
+    updateSklearnTrainingDisplay(data);
+    return;
+  }
+  
+  // Update stats for NEAT
   const genEl = document.getElementById('train-generation');
   const bestEl = document.getElementById('train-best-fitness');
   const avgEl = document.getElementById('train-avg-fitness');
@@ -560,6 +583,51 @@ if (applyNeatConfigBtn) {
       sendNeatConfig();
     }
   });
+}
+
+// Apply Sklearn config button
+const applySklearnConfigBtn = document.getElementById('btn-apply-sklearn-config');
+if (applySklearnConfigBtn) {
+  applySklearnConfigBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendSklearnConfig();
+    }
+  });
+}
+
+function updateSklearnTrainingDisplay(data: any) {
+  const episodeEl = document.getElementById('sklearn-episode');
+  const bestRewardEl = document.getElementById('sklearn-best-reward');
+  const lastRewardEl = document.getElementById('sklearn-last-reward');
+  const explorationEl = document.getElementById('sklearn-exploration');
+  
+  if (episodeEl && data.episode !== undefined) {
+    episodeEl.textContent = data.episode.toString();
+  }
+  if (bestRewardEl && data.best_reward !== undefined) {
+    bestRewardEl.textContent = data.best_reward.toFixed(1);
+  }
+  if (lastRewardEl && data.last_reward !== undefined) {
+    lastRewardEl.textContent = data.last_reward.toFixed(1);
+  }
+  if (explorationEl && data.exploration_rate !== undefined) {
+    explorationEl.textContent = data.exploration_rate.toFixed(3);
+  }
+}
+
+function sendSklearnConfig() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const episodes = (document.getElementById('sklearn-episodes') as HTMLInputElement)?.value || '1000';
+    const maxSpeed = (document.getElementById('sklearn-max-speed') as HTMLInputElement)?.value || '9000';
+    const simSteps = (document.getElementById('sklearn-sim-steps') as HTMLInputElement)?.value || '5000';
+    
+    ws.send(JSON.stringify({
+      type: 'SKLEARN_CONFIG',
+      episodes: parseInt(episodes),
+      max_speed: parseInt(maxSpeed),
+      sim_steps: parseInt(simSteps)
+    }));
+  }
 }
 
 function updateModeDisplay(mode: string) {

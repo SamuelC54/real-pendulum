@@ -804,24 +804,60 @@ async def start_balance_training():
     
     await broadcast_message({"type": "TRAINING_STARTED", "trainer": "balance"})
 
+async def start_sklearn_training():
+    """Start sklearn RL training in background process"""
+    global training_process
+    
+    if training_process and training_process.poll() is None:
+        print("Training already running!")
+        return
+    
+    print("Starting sklearn RL training...", flush=True)
+    
+    # Clear old status file
+    if os.path.exists(TRAINING_STATUS_FILE):
+        os.remove(TRAINING_STATUS_FILE)
+    
+    # Start sklearn training process
+    trainer_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_trainer.py')
+    training_process = subprocess.Popen(
+        [sys.executable, trainer_path],
+        cwd=os.path.dirname(__file__)
+    )
+    
+    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "sklearn"})
+
 async def stop_training():
-    """Stop NEAT training"""
+    """Stop training (works for both NEAT and sklearn)"""
     global training_process, last_training_status
     
     if training_process and training_process.poll() is None:
-        print("Stopping NEAT training...", flush=True)
+        print("Stopping training...", flush=True)
+        
+        # Create stop flag for sklearn trainer
+        stop_flag = os.path.join(os.path.dirname(__file__), 'stop_training.flag')
+        with open(stop_flag, 'w') as f:
+            f.write('stop')
+        
+        # Terminate process
         training_process.terminate()
-        training_process.wait(timeout=5)
+        try:
+            training_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            training_process.kill()
         training_process = None
         
-        # Clean up status file
+        # Clean up files
         if os.path.exists(TRAINING_STATUS_FILE):
             os.remove(TRAINING_STATUS_FILE)
+        if os.path.exists(stop_flag):
+            os.remove(stop_flag)
         last_training_status = None
         
-        # Reload the best genome if it exists
-        global neat_network
+        # Reload models if they exist
+        global neat_network, sklearn_rl_model
         load_neat_network()
+        load_sklearn_rl_model()
         
         await broadcast_message({"type": "TRAINING_STOPPED"})
     else:
@@ -903,6 +939,31 @@ async def update_neat_config(cmd: dict):
         
     except Exception as e:
         print(f"Error updating NEAT config: {e}", flush=True)
+
+async def update_sklearn_config(cmd: dict):
+    """Update sklearn training configuration in JSON file"""
+    episodes = cmd.get('episodes', 1000)
+    max_speed = cmd.get('max_speed', 9000)
+    sim_steps = cmd.get('sim_steps', 5000)
+    
+    try:
+        # Load existing config
+        config_data = load_training_config()
+        
+        # Update sklearn config
+        config_data['sklearn'] = {
+            "episodes": episodes,
+            "max_speed": max_speed,
+            "sim_steps": sim_steps
+        }
+        
+        # Save to file
+        save_training_config(config_data)
+        
+        print(f"Sklearn config updated: episodes={episodes}, max_speed={max_speed}, sim_steps={sim_steps}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "Sklearn config updated!"})
+    except Exception as e:
+        print(f"Error updating sklearn config: {e}", flush=True)
         await broadcast_message({"type": "CONFIG_RESULT", "success": False, "message": str(e)})
 
 async def send_neat_config(websocket, trainer_type: str):
@@ -1050,8 +1111,12 @@ async def handle_command(message: str, websocket=None):
             # Start NEAT balance training in background
             await start_balance_training()
         
+        elif cmd_type == "START_SKLEARN_TRAINING":
+            # Start sklearn RL training in background
+            await start_sklearn_training()
+        
         elif cmd_type == "STOP_TRAINING":
-            # Stop NEAT training
+            # Stop training (works for both NEAT and sklearn)
             await stop_training()
         
         elif cmd_type == "DELETE_BEST":
@@ -1062,6 +1127,10 @@ async def handle_command(message: str, websocket=None):
         elif cmd_type == "NEAT_CONFIG":
             # Update NEAT config
             await update_neat_config(cmd)
+        
+        elif cmd_type == "SKLEARN_CONFIG":
+            # Update sklearn config
+            await update_sklearn_config(cmd)
         
         elif cmd_type == "GET_NEAT_CONFIG":
             # Get NEAT config for a specific trainer
