@@ -4,8 +4,9 @@ Scikit-learn Neural Network with Reinforcement Learning Trainer
 Uses sklearn's MLPRegressor (2 hidden layers, 10 nodes each) with Q-learning
 to train a controller for the inverted pendulum balance task.
 
-Inputs (4):
-  - Angle from upright (normalized: 180° = 0, 0°/360° = ±1)
+Inputs (5):
+  - sin(θ) - sine of pendulum angle (prevents angle wrap discontinuity)
+  - cos(θ) - cosine of pendulum angle (prevents angle wrap discontinuity)
   - Angular velocity (normalized)
   - Cart position (normalized)
   - Cart velocity (normalized)
@@ -28,7 +29,7 @@ import time
 import numpy as np
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
-from simulator import PendulumSimulator
+from simulator import PendulumSimulator, SimulatorConfig
 from trainer_utils import create_fast_simulator, normalize_angle, load_training_params, send_training_update
 
 # Paths
@@ -52,13 +53,20 @@ EXPLORATION_DECAY = 0.995
 MIN_EXPLORATION = 0.01
 
 # Network architecture
-HIDDEN_LAYER_SIZES = (10, 10)  # 2 hidden layers of 10 nodes each
+HIDDEN_LAYER_SIZES = (10)  # 1 hidden layers of 10 nodes each
+
+# Progressive training parameters
+PROGRESSIVE_TRAINING_EPISODES = 100000  # Episodes to gradually increase gravity
+INITIAL_GRAVITY = 2.0  # Start with lower gravity (m/s²)
+FINAL_GRAVITY = 9.81  # Final gravity (m/s²)
+INITIAL_DAMPING = 0.5  # Start with higher damping
+FINAL_DAMPING = 0.1  # Final damping (matches create_fast_simulator)
 
 
 class QLearningAgent:
     """Q-Learning agent using sklearn MLPRegressor"""
     
-    def __init__(self, state_size=4, action_size=1):
+    def __init__(self, state_size=5, action_size=1):
         self.state_size = state_size
         self.action_size = action_size
         self.exploration_rate = EXPLORATION_RATE
@@ -172,21 +180,94 @@ class QLearningAgent:
         return False
 
 
-def compute_reward(state, angle_deg, prev_angle_deg):
-    """Compute reward for current state"""
-    angle_from_up = abs(normalize_angle(angle_deg))
+def get_progressive_physics(episode_num):
+    """
+    Calculate progressive gravity and damping values based on episode number.
     
-    # Reward for being near upright
-    if angle_from_up < 0.167:  # Within 30° of upright
-        reward = 1.0
-    else:
-        reward = -0.1
+    For episodes 0 to PROGRESSIVE_TRAINING_EPISODES:
+    - Gravity: linearly increases from INITIAL_GRAVITY to FINAL_GRAVITY
+    - Damping: linearly decreases from INITIAL_DAMPING to FINAL_DAMPING
     
-    # Penalty for falling
-    if angle_from_up > 0.25:  # Past 45°
-        reward = -10.0
+    After PROGRESSIVE_TRAINING_EPISODES, uses final values.
     
-    # Penalty for hitting limits
+    Args:
+        episode_num: Current episode number (0-indexed)
+    
+    Returns:
+        Tuple of (gravity, damping)
+    """
+    if episode_num >= PROGRESSIVE_TRAINING_EPISODES:
+        return FINAL_GRAVITY, FINAL_DAMPING
+    
+    # Linear interpolation
+    progress = episode_num / PROGRESSIVE_TRAINING_EPISODES
+    
+    gravity = INITIAL_GRAVITY + (FINAL_GRAVITY - INITIAL_GRAVITY) * progress
+    damping = INITIAL_DAMPING + (FINAL_DAMPING - INITIAL_DAMPING) * progress
+    
+    return gravity, damping
+
+
+def compute_reward(state, angle_rad, angular_velocity, cart_position, cart_velocity, acceleration, rail_length, max_accel):
+    """
+    Compute reward for balancing task.
+    
+    Reward structure:
+    - Upright term: -cos(θ) (max at θ=π/180°, upright position)
+    - Penalize angular velocity: -k1 * θ̇²
+    - Penalize cart position: -k2 * x²
+    - Penalize cart velocity: -k3 * ẋ²
+    - Penalize aggressive control: -k4 * a²
+    - Big terminal penalty if falling past angle threshold
+    
+    Args:
+        state: Simulator state dict
+        angle_rad: Pendulum angle in radians (0 = DOWN, π = UP)
+        angular_velocity: Angular velocity in rad/s
+        cart_position: Cart position in steps
+        cart_velocity: Cart velocity in steps/s
+        acceleration: Applied acceleration in steps/s²
+        rail_length: Rail length in steps
+        max_accel: Maximum acceleration in steps/s² (for normalization)
+    
+    Returns:
+        Reward value
+    """
+    # Reward coefficients
+    k1 = 0.01   # Angular velocity penalty
+    k2 = 0.001  # Cart position penalty
+    k3 = 0.01   # Cart velocity penalty
+    k4 = 0.001  # Control action penalty
+    
+    # Upright term: -cos(θ) (max when θ=π, i.e., upright)
+    # In simulator: θ=0 is DOWN, θ=π is UP (upright)
+    upright_term = -math.cos(angle_rad)
+    
+    # Normalize values for penalty terms
+    # Angular velocity: already in rad/s
+    angular_vel_sq = angular_velocity ** 2
+    
+    # Cart position: normalize to [-1, 1] range (center = 0)
+    cart_pos_normalized = cart_position / (rail_length / 2) if rail_length > 0 else 0
+    cart_pos_sq = cart_pos_normalized ** 2
+    
+    # Cart velocity: normalize by max speed
+    cart_vel_normalized = cart_velocity / MAX_SPEED
+    cart_vel_sq = cart_vel_normalized ** 2
+    
+    # Acceleration: normalize by max acceleration
+    accel_normalized = acceleration / max_accel
+    accel_sq = accel_normalized ** 2
+    
+    # Compute base reward
+    reward = upright_term - k1 * angular_vel_sq - k2 * cart_pos_sq - k3 * cart_vel_sq - k4 * accel_sq
+    
+    # Terminal penalty: big penalty if falling past threshold (20° = ~0.35 radians from upright)
+    angle_from_up_rad = abs(angle_rad - math.pi)  # Distance from π (upright)
+    if angle_from_up_rad > math.radians(20):  # Past 20° from upright
+        reward = -50.0  # Big terminal penalty
+    
+    # Penalty for hitting rail limits
     if state['limit_left'] or state['limit_right']:
         reward = -50.0
     
@@ -195,7 +276,19 @@ def compute_reward(state, angle_deg, prev_angle_deg):
 
 def train_episode(agent, episode_num):
     """Train for one episode"""
-    sim_config = create_fast_simulator()
+    # Get progressive physics values
+    gravity, damping = get_progressive_physics(episode_num)
+    
+    # Create simulator config with progressive values
+    sim_config = SimulatorConfig(
+        rail_length_steps=7500,
+        cart_mass=0.5,
+        motor_accel=500000,
+        pendulum_length=0.3,
+        pendulum_mass=0.1,
+        gravity=gravity,
+        damping=damping,
+    )
     sim = PendulumSimulator(sim_config, start_background_thread=False)
     
     # Start pendulum at 180° (upright) with small perturbation
@@ -214,15 +307,16 @@ def train_episode(agent, episode_num):
     rail_length = state['limit_right_pos'] - state['limit_left_pos']
     
     total_reward = 0.0
-    prev_angle_deg = math.degrees(state['pendulum_angle']) % 360
     
     for step in range(SIMULATION_STEPS):
         state = sim.get_state()
         angle_deg = math.degrees(state['pendulum_angle']) % 360
+        angle_rad = state['pendulum_angle']  # Already in radians
         
-        # Prepare state vector
+        # Prepare state vector using sin(θ) and cos(θ) to prevent angle wrap discontinuity
         state_vec = [
-            normalize_angle(angle_deg),
+            math.sin(angle_rad),
+            math.cos(angle_rad),
             state['pendulum_velocity'] / 1000.0,
             state['cart_position'] / (rail_length / 2) if rail_length > 0 else 0,
             state['cart_velocity'] / MAX_SPEED
@@ -242,18 +336,32 @@ def train_episode(agent, episode_num):
         # Get next state
         next_state = sim.get_state()
         next_angle_deg = math.degrees(next_state['pendulum_angle']) % 360
+        next_angle_rad = next_state['pendulum_angle']  # Already in radians
         
-        # Compute reward
-        reward = compute_reward(next_state, next_angle_deg, prev_angle_deg)
+        # Compute reward using new reward structure
+        reward = compute_reward(
+            next_state,
+            next_angle_rad,
+            next_state['pendulum_velocity'],
+            next_state['cart_position'],
+            next_state['cart_velocity'],
+            acceleration,
+            rail_length,
+            max_accel
+        )
         total_reward += reward
         
-        # Check if done
+        # Check if done: |θ - π| > 20° or |x| > rail_limit
+        angle_from_up_rad = abs(next_angle_rad - math.pi)
+        cart_pos_normalized = abs(next_state['cart_position'] / (rail_length / 2)) if rail_length > 0 else 0
         done = (next_state['limit_left'] or next_state['limit_right'] or 
-                abs(normalize_angle(next_angle_deg)) > 0.25)
+                angle_from_up_rad > math.radians(20) or
+                cart_pos_normalized > 1.0)
         
-        # Prepare next state vector
+        # Prepare next state vector using sin(θ) and cos(θ) to prevent angle wrap discontinuity
         next_state_vec = [
-            normalize_angle(next_angle_deg),
+            math.sin(next_angle_rad),
+            math.cos(next_angle_rad),
             next_state['pendulum_velocity'] / 1000.0,
             next_state['cart_position'] / (rail_length / 2) if rail_length > 0 else 0,
             next_state['cart_velocity'] / MAX_SPEED
@@ -264,8 +372,6 @@ def train_episode(agent, episode_num):
         
         # Train on batch
         agent.replay()
-        
-        prev_angle_deg = next_angle_deg
         
         if done:
             break
@@ -300,10 +406,10 @@ def train():
     if os.path.exists(STOP_TRAINING_FILE):
         os.remove(STOP_TRAINING_FILE)
     
-    agent = QLearningAgent(state_size=4, action_size=1)
+    agent = QLearningAgent(state_size=5, action_size=1)
     
     print("Starting Q-Learning training with sklearn MLPRegressor...")
-    print(f"Network architecture: 4 inputs -> {HIDDEN_LAYER_SIZES} -> 1 output")
+    print(f"Network architecture: 5 inputs (sin(θ), cos(θ), angular_vel, cart_pos, cart_vel) -> {HIDDEN_LAYER_SIZES} -> 1 output")
     print(f"Episodes: {EPISODES}, Max Speed: {MAX_SPEED}, Sim Steps: {SIMULATION_STEPS}")
     
     best_reward = float('-inf')
@@ -332,9 +438,13 @@ def train():
             'steps': steps
         })
         
+        # Get current physics values for display
+        current_gravity, current_damping = get_progressive_physics(episode)
+        
         if (episode + 1) % 10 == 0:
             print(f"Episode {episode + 1}, Reward: {reward:.1f}, Steps: {steps}, "
-                  f"Best: {best_reward:.1f}, Exploration: {agent.exploration_rate:.3f}")
+                  f"Best: {best_reward:.1f}, Exploration: {agent.exploration_rate:.3f}, "
+                  f"Gravity: {current_gravity:.2f}, Damping: {current_damping:.3f}")
         
         episode += 1
         
@@ -349,7 +459,7 @@ def train():
 
 def test():
     """Test the trained model"""
-    agent = QLearningAgent(state_size=4, action_size=1)
+    agent = QLearningAgent(state_size=5, action_size=1)
     
     if not agent.load(MODEL_PATH, SCALER_PATH):
         print("No trained model found. Run training first.")
@@ -376,10 +486,12 @@ def test():
     for step in range(SIMULATION_STEPS * 2):
         state = sim.get_state()
         angle_deg = math.degrees(state['pendulum_angle']) % 360
+        angle_rad = state['pendulum_angle']  # Already in radians
         
-        # Prepare state vector
+        # Prepare state vector using sin(θ) and cos(θ) to prevent angle wrap discontinuity
         state_vec = [
-            normalize_angle(angle_deg),
+            math.sin(angle_rad),
+            math.cos(angle_rad),
             state['pendulum_velocity'] / 1000.0,
             state['cart_position'] / (rail_length / 2) if rail_length > 0 else 0,
             state['cart_velocity'] / MAX_SPEED
