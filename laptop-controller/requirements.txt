@@ -3,6 +3,8 @@ keyboard
 watchdog
 websockets
 neat-python==0.92
+numpy>=1.20.0
+scikit-learn>=1.0.0
 
 
 

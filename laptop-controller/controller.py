@@ -41,6 +41,14 @@ except ImportError:
 # NEAT neural network for balance mode
 neat_network = None  # Loaded on startup if available
 
+# Sklearn RL model
+sklearn_rl_model = None
+sklearn_rl_scaler = None
+
+# Sklearn RL model
+sklearn_rl_model = None
+sklearn_rl_scaler = None
+
 # ============ CONFIGURATION ============
 SERIAL_PORT = "COM3"
 BAUD = 115200
@@ -63,7 +71,7 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, manual_left_accel, manual_right_accel, oscillate, neat_swing_up_only, neat_balance_only, homing
+    mode: str = "idle"             # idle, manual_left, manual_right, manual_left_accel, manual_right_accel, oscillate, neat_swing_up_only, neat_balance_only, sklearn_rl, homing
     manual_accel_mode: bool = False  # Whether manual mode uses acceleration instead of velocity
     connected: bool = False
     # Homing state
@@ -278,6 +286,33 @@ def load_balance_network():
         balance_genome_info = None
         return False
 
+def load_sklearn_rl_model():
+    """Load the sklearn RL model if available"""
+    global sklearn_rl_model, sklearn_rl_scaler
+    
+    model_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_model.pkl')
+    scaler_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_scaler.pkl')
+    
+    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+        print("Sklearn RL: No trained model found")
+        sklearn_rl_model = None
+        sklearn_rl_scaler = None
+        return False
+    
+    try:
+        import pickle
+        with open(model_path, 'rb') as f:
+            sklearn_rl_model = pickle.load(f)
+        with open(scaler_path, 'rb') as f:
+            sklearn_rl_scaler = pickle.load(f)
+        print("Sklearn RL: Loaded trained model")
+        return True
+    except Exception as e:
+        print(f"Sklearn RL: Failed to load model: {e}")
+        sklearn_rl_model = None
+        sklearn_rl_scaler = None
+        return False
+
 def normalize_angle_for_neat(angle_deg):
     """Normalize angle so 180° (upright) = 0, range [-1, 1]"""
     # In our system: 0° = down, 180° = up
@@ -472,6 +507,9 @@ def compute_velocity() -> int:
     elif state.mode == "neat_balance_only":
         return compute_neat_balance_only()
     
+    elif state.mode == "sklearn_rl":
+        return compute_sklearn_rl()
+    
     elif state.mode == "homing":
         return compute_homing()
     
@@ -584,6 +622,56 @@ def compute_neat_balance_only() -> int:
     target_velocity = state.velocity + velocity_change
     
     # Clamp to max speed
+    target_velocity = max(-config.neat_max_speed, min(config.neat_max_speed, target_velocity))
+    
+    return int(target_velocity)
+
+def compute_sklearn_rl() -> int:
+    """Use sklearn RL model to control the pendulum"""
+    if sklearn_rl_model is None or sklearn_rl_scaler is None:
+        print("Sklearn RL model not loaded! Going to idle.")
+        state.mode = "idle"
+        return 0
+    
+    # Get rail limits for normalization
+    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
+    
+    # Prepare inputs (same as balance trainer)
+    inputs = [
+        normalize_angle_for_neat(state.angle),
+        state.angular_velocity / 1000.0,
+        state.position / rail_half,
+        state.velocity / config.neat_max_speed
+    ]
+    
+    # Scale inputs
+    import numpy as np
+    state_scaled = sklearn_rl_scaler.transform([inputs])
+    
+    # Get action from model (predict returns 1D array)
+    q_value = sklearn_rl_model.predict(state_scaled)
+    action = float(q_value.flat[0])  # Extract scalar value
+    action = np.clip(action, -1.0, 1.0)
+    
+    # Convert to acceleration
+    max_accel = config.manual_accel
+    acceleration = action * max_accel
+    
+    # Respect limits
+    if state.limit_left and acceleration < 0:
+        acceleration = 0
+    if state.limit_right and acceleration > 0:
+        acceleration = 0
+    
+    # For simulator mode: use acceleration directly
+    if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
+        serial_port.set_target_acceleration(acceleration)
+        return 0  # Return 0 since we set acceleration directly
+    
+    # For real hardware: integrate acceleration to get velocity
+    CONTROL_DT = 0.02
+    velocity_change = acceleration * CONTROL_DT
+    target_velocity = state.velocity + velocity_change
     target_velocity = max(-config.neat_max_speed, min(config.neat_max_speed, target_velocity))
     
     return int(target_velocity)
@@ -902,11 +990,11 @@ async def handle_command(message: str, websocket=None):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only"]:
-                # Reset pendulum to upright in simulator when entering balance-only mode
-                if new_mode == "neat_balance_only" and SIMULATOR_MODE and serial_port:
+            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only", "sklearn_rl"]:
+                # Reset pendulum to upright in simulator when entering balance modes
+                if new_mode in ["neat_balance_only", "sklearn_rl"] and SIMULATOR_MODE and serial_port:
                     serial_port.set_pendulum_upright()
-                    print("Simulator: Reset pendulum to upright (180°)")
+                    print(f"Simulator: Reset pendulum to upright (180°) for {new_mode}")
                 
                 state.mode = new_mode
                 print(f"Mode changed to: {new_mode}")
@@ -1141,6 +1229,7 @@ async def main():
     # Load NEAT networks and config
     load_neat_network()
     load_balance_network()
+    load_sklearn_rl_model()
     get_neat_config()
     
     # Connect to Arduino or simulator
