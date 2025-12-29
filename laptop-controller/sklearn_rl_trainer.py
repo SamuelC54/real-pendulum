@@ -200,9 +200,11 @@ def train_episode(agent, episode_num):
     
     # Start pendulum at 180° (upright) with small perturbation
     perturbation = random.uniform(-10, 10)
+    # Start with initial cart velocity to prevent "no action" from being a good strategy
+    initial_cart_velocity = random.uniform(-MAX_SPEED * 0.3, MAX_SPEED * 0.3)
     sim.set_state(
         cart_position=0.0,
-        cart_velocity=0.0,
+        cart_velocity=initial_cart_velocity,
         pendulum_angle=math.radians(180 + perturbation),
         pendulum_velocity=random.uniform(-0.5, 0.5)
     )
