@@ -218,14 +218,14 @@ def evaluate_genome(genome, config, visualize=False):
         
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
         
-        # # Check if reached near 180° 
-        # if angle_from_up < 0.1:  # Within 10° of 180°
-        #     reached_top = True
+        # Check if reached near 180° 
+        if angle_from_up < 0.5:  # Within 10° of 180°
+            reached_top = True
         
-        # # If reached top and fell back down (past 90° from top), reset score
-        # if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
-        #     fitness = 0
-        #     reached_top = False  # Reset to allow another attempt
+        # If reached top and fell back down (past 90° from top), reset score
+        if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
+            fitness = 0
+            reached_top = False  # Reset to allow another attempt
         
         # Exponential reward: more points when closer to 180°
         # closeness = 1 when at 180°, 0 when at 0°
