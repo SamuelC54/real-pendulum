@@ -295,12 +295,26 @@ class WebSocketReporter(neat.reporting.BaseReporter):
         training_stats["species_count"] = len(species_set.species)
         training_stats["population_size"] = len(population)
         
+        # Clear best_genome - only set if new best found
+        training_stats.pop("best_genome", None)
+        
         # Auto-save if this is a new best fitness
         if current_best > self.best_fitness_ever:
             self.best_fitness_ever = current_best
             with open(BEST_GENOME_PATH, 'wb') as f:
                 pickle.dump(best_genome, f)
             print(f"*** New best fitness: {current_best:.1f} - Auto-saved! ***")
+            
+            # Update best genome info for web interface (only when new best found)
+            import datetime
+            num_nodes = len(best_genome.nodes)
+            num_connections = len([c for c in best_genome.connections.values() if c.enabled])
+            training_stats["best_genome"] = {
+                "fitness": current_best,
+                "nodes": num_nodes,
+                "connections": num_connections,
+                "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
         
         # Keep last 100 fitness values for graph
         training_stats["fitness_history"].append(training_stats["best_fitness"])

@@ -375,6 +375,11 @@ function updateTrainingDisplay(data: any) {
   if (speciesEl) speciesEl.textContent = data.species_count?.toString() || '0';
   if (popEl) popEl.textContent = data.population_size?.toString() || '0';
   
+  // Update best genome display if new best was saved
+  if (data.best_genome) {
+    updateBestGenomeDisplay(data.best_genome);
+  }
+  
   // Draw fitness graph
   const canvas = document.getElementById('fitness-canvas') as HTMLCanvasElement;
   if (canvas && data.fitness_history && data.fitness_history.length > 0) {
@@ -561,8 +566,10 @@ function connect() {
             }
           }
           
-          // Update best genome info
-          updateBestGenomeDisplay(data.best_genome);
+          // Update best genome info (only if data exists)
+          if (data.best_genome) {
+            updateBestGenomeDisplay(data.best_genome);
+          }
           
           // Update NEAT config inputs (once on first connection)
           updateNeatConfigDisplay(data.neat_config);
@@ -581,6 +588,13 @@ function connect() {
             showUploadStatus('✓ Upload successful!', 'success');
           } else {
             showUploadStatus('✗ ' + (data.message || 'Upload failed'), 'error');
+          }
+        }
+        
+        if (data.type === 'DELETE_RESULT') {
+          if (data.success) {
+            // Clear the best genome display
+            updateBestGenomeDisplay(null);
           }
         }
         
