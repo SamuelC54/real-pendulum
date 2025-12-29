@@ -12,17 +12,19 @@
       <div id="neat-panel">
         <h2>🧬 NEAT Training</h2>
         
-        <div class="control-row">
-          <button id="btn-start-training" class="control-btn neat-btn" title="Swing-up training (starts from 0°)">
-            🚀 Swing-Up
-          </button>
-          <button id="btn-start-balance" class="control-btn balance-btn" title="Balance training (starts from 180°)">
-            ⚖ Balance
-          </button>
+        <!-- Tabs -->
+        <div class="neat-tabs">
+          <button class="neat-tab active" data-tab="swing-up">🚀 Swing-Up</button>
+          <button class="neat-tab" data-tab="balance">⚖ Balance</button>
         </div>
+        
+        <!-- Training Controls -->
         <div class="control-row">
+          <button id="btn-start-training" class="control-btn neat-btn">
+            ▶ Start
+          </button>
           <button id="btn-stop-training" class="control-btn stop-btn" style="display: none;">
-            ⏹ Stop Training
+            ⏹ Stop
           </button>
         </div>
         
@@ -49,16 +51,16 @@
           <canvas id="fitness-canvas" width="280" height="80"></canvas>
         </div>
         
-        <h3>NEAT Config</h3>
+        <h3>Config</h3>
         
         <div class="config-row">
           <label>Population</label>
-          <input type="number" id="neat-pop-size" value="1000" min="10" max="5000">
+          <input type="number" id="neat-pop-size" value="100" min="10" max="5000">
         </div>
         
         <div class="config-row">
           <label>Max Speed</label>
-          <input type="number" id="neat-max-speed" value="100000" min="1000" max="500000" step="1000">
+          <input type="number" id="neat-max-speed" value="9000" min="1000" max="500000" step="1000">
         </div>
         
         <div class="config-row">

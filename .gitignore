@@ -12,9 +12,6 @@ build/
 neat_swing_up_checkpoints/
 neat_balance_checkpoints/
 training_status.json
-best_swing_up_genome.pkl
-best_balance_genome.pkl
-best_genome.pkl
 
 # IDE
 .vscode/

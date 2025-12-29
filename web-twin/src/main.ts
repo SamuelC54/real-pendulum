@@ -275,16 +275,16 @@ function showUploadStatus(message: string, type: 'uploading' | 'success' | 'erro
 
 // Training progress display
 let trainingActive = false;
+let selectedTrainingType: 'swing-up' | 'balance' = 'swing-up';
+
+// Store genome info for both training types
+let bestGenomeSwingUp: any = null;
+let bestGenomeBalance: any = null;
 
 function sendStartTraining() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'START_TRAINING' }));
-  }
-}
-
-function sendStartBalanceTraining() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'START_BALANCE_TRAINING' }));
+    const type = selectedTrainingType === 'swing-up' ? 'START_TRAINING' : 'START_BALANCE_TRAINING';
+    ws.send(JSON.stringify({ type }));
   }
 }
 
@@ -296,18 +296,19 @@ function sendStopTraining() {
 
 function sendDeleteBest() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'DELETE_BEST' }));
+    ws.send(JSON.stringify({ type: 'DELETE_BEST', trainer: selectedTrainingType }));
   }
 }
 
 function sendNeatConfig() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const popSize = (document.getElementById('neat-pop-size') as HTMLInputElement)?.value || '1000';
-    const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '100000';
+    const popSize = (document.getElementById('neat-pop-size') as HTMLInputElement)?.value || '100';
+    const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '9000';
     const simSteps = (document.getElementById('neat-sim-steps') as HTMLInputElement)?.value || '2000';
     
     ws.send(JSON.stringify({ 
       type: 'NEAT_CONFIG',
+      trainer: selectedTrainingType,
       pop_size: parseInt(popSize),
       max_speed: parseInt(maxSpeed),
       sim_steps: parseInt(simSteps)
@@ -315,8 +316,33 @@ function sendNeatConfig() {
   }
 }
 
+// Tab switching
+function setupTabs() {
+  const tabs = document.querySelectorAll('.neat-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance';
+      if (tabType) {
+        selectedTrainingType = tabType;
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        
+        // Update best genome display for the selected tab
+        const currentGenome = tabType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
+        updateBestGenomeDisplay(currentGenome);
+        
+        // Request config for this trainer type
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'GET_NEAT_CONFIG', trainer: tabType }));
+        }
+      }
+    });
+  });
+}
+
+setupTabs();
+
 function updateBestGenomeDisplay(genome: any) {
-  const container = document.getElementById('best-genome-info');
   const fitnessEl = document.getElementById('genome-fitness');
   const nodesEl = document.getElementById('genome-nodes');
   const connectionsEl = document.getElementById('genome-connections');
@@ -364,10 +390,8 @@ function updateTrainingDisplay(data: any) {
   // Show training is active
   trainingActive = true;
   const startBtn = document.getElementById('btn-start-training');
-  const balanceBtn = document.getElementById('btn-start-balance');
   const stopBtn = document.getElementById('btn-stop-training');
   if (startBtn) startBtn.style.display = 'none';
-  if (balanceBtn) balanceBtn.style.display = 'none';
   if (stopBtn) stopBtn.style.display = 'block';
   
   // Update stats
@@ -385,6 +409,12 @@ function updateTrainingDisplay(data: any) {
   
   // Update best genome display if new best was saved
   if (data.best_genome) {
+    // Store in the correct variable based on selected training type
+    if (selectedTrainingType === 'swing-up') {
+      bestGenomeSwingUp = data.best_genome;
+    } else {
+      bestGenomeBalance = data.best_genome;
+    }
     updateBestGenomeDisplay(data.best_genome);
   }
   
@@ -446,7 +476,6 @@ if (uploadBtn) {
 
 // Training buttons
 const startTrainingBtn = document.getElementById('btn-start-training');
-const startBalanceBtn = document.getElementById('btn-start-balance');
 const stopTrainingBtn = document.getElementById('btn-stop-training');
 
 if (startTrainingBtn) {
@@ -454,18 +483,6 @@ if (startTrainingBtn) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       sendStartTraining();
       startTrainingBtn.style.display = 'none';
-      if (startBalanceBtn) startBalanceBtn.style.display = 'none';
-      if (stopTrainingBtn) stopTrainingBtn.style.display = 'block';
-    }
-  });
-}
-
-if (startBalanceBtn) {
-  startBalanceBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      sendStartBalanceTraining();
-      if (startTrainingBtn) startTrainingBtn.style.display = 'none';
-      startBalanceBtn.style.display = 'none';
       if (stopTrainingBtn) stopTrainingBtn.style.display = 'block';
     }
   });
@@ -587,10 +604,16 @@ function connect() {
             }
           }
           
-          // Update best genome info (only if data exists)
-          if (data.best_genome) {
-            updateBestGenomeDisplay(data.best_genome);
+          // Store genome info for both training types
+          if (data.best_genome_swing_up !== undefined) {
+            bestGenomeSwingUp = data.best_genome_swing_up;
           }
+          if (data.best_genome_balance !== undefined) {
+            bestGenomeBalance = data.best_genome_balance;
+          }
+          // Display the genome for the selected tab
+          const currentGenome = selectedTrainingType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
+          updateBestGenomeDisplay(currentGenome);
           
           // Update NEAT config inputs (once on first connection)
           updateNeatConfigDisplay(data.neat_config);
@@ -614,7 +637,12 @@ function connect() {
         
         if (data.type === 'DELETE_RESULT') {
           if (data.success) {
-            // Clear the best genome display
+            // Clear the genome for the selected tab
+            if (selectedTrainingType === 'swing-up') {
+              bestGenomeSwingUp = null;
+            } else {
+              bestGenomeBalance = null;
+            }
             updateBestGenomeDisplay(null);
           }
         }
@@ -628,10 +656,8 @@ function connect() {
           console.log('Training started:', data.trainer || 'unknown');
           trainingActive = true;
           const startBtn = document.getElementById('btn-start-training');
-          const balanceBtn = document.getElementById('btn-start-balance');
           const stopBtn = document.getElementById('btn-stop-training');
           if (startBtn) startBtn.style.display = 'none';
-          if (balanceBtn) balanceBtn.style.display = 'none';
           if (stopBtn) stopBtn.style.display = 'block';
         }
         
@@ -639,11 +665,20 @@ function connect() {
           console.log('Training stopped');
           trainingActive = false;
           const startBtn = document.getElementById('btn-start-training');
-          const balanceBtn = document.getElementById('btn-start-balance');
           const stopBtn = document.getElementById('btn-stop-training');
           if (startBtn) startBtn.style.display = 'block';
-          if (balanceBtn) balanceBtn.style.display = 'block';
           if (stopBtn) stopBtn.style.display = 'none';
+        }
+        
+        if (data.type === 'NEAT_CONFIG_DATA') {
+          // Update config inputs with data for selected trainer
+          const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
+          const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
+          const simStepsEl = document.getElementById('neat-sim-steps') as HTMLInputElement;
+          
+          if (popSizeEl && data.pop_size) popSizeEl.value = data.pop_size.toString();
+          if (maxSpeedEl && data.max_speed) maxSpeedEl.value = data.max_speed.toString();
+          if (simStepsEl && data.sim_steps) simStepsEl.value = data.sim_steps.toString();
         }
         
       } catch (e) {

@@ -56,15 +56,31 @@ def send_training_update():
     except:
         pass  # Just skip if file write fails
 
-# Training parameters
-MAX_SPEED = 9000          # Max cart velocity for training
-SIMULATION_STEPS = 10000    # Steps per evaluation (at 50Hz = 40 seconds)
-EVAL_DT = 0.02             # Evaluation timestep (50Hz)
-
 # Paths
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
 BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
+TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
+
+# Load training parameters from JSON config
+def load_training_params():
+    try:
+        with open(TRAINING_CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+        swing_up = config.get('swing_up', {})
+        return {
+            'max_speed': swing_up.get('max_speed', 9000),
+            'sim_steps': swing_up.get('sim_steps', 2000),
+            'pop_size': swing_up.get('pop_size', 100)
+        }
+    except:
+        return {'max_speed': 9000, 'sim_steps': 2000, 'pop_size': 100}
+
+# Training parameters (loaded from JSON)
+_params = load_training_params()
+MAX_SPEED = _params['max_speed']
+SIMULATION_STEPS = _params['sim_steps']
+EVAL_DT = 0.02  # Evaluation timestep (50Hz)
 
 
 def normalize_angle(angle_deg):

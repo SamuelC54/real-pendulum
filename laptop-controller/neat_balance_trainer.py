@@ -34,11 +34,27 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_balance_config.txt')
 BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_balance_checkpoints')
 TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
+TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
 
-# Training parameters
-MAX_SPEED = 10000           # Lower speed for balance (doesn't need fast movements)
-SIMULATION_STEPS = 5000    # Steps per evaluation (at 50Hz = 100 seconds)
-EVAL_DT = 0.02             # Evaluation timestep (50Hz)
+# Load training parameters from JSON config
+def load_training_params():
+    try:
+        with open(TRAINING_CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+        balance = config.get('balance', {})
+        return {
+            'max_speed': balance.get('max_speed', 5000),
+            'sim_steps': balance.get('sim_steps', 5000),
+            'pop_size': balance.get('pop_size', 100)
+        }
+    except:
+        return {'max_speed': 5000, 'sim_steps': 5000, 'pop_size': 100}
+
+# Training parameters (loaded from JSON)
+_params = load_training_params()
+MAX_SPEED = _params['max_speed']
+SIMULATION_STEPS = _params['sim_steps']
+EVAL_DT = 0.02  # Evaluation timestep (50Hz)
 
 training_stats = {
     "generation": 0,

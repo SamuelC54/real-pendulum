@@ -60,6 +60,36 @@ body {
   color: rgba(200, 100, 255, 0.8);
   margin-top: 8px;
   margin-bottom: 4px;
+}
+
+/* NEAT Tabs */
+.neat-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.neat-tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid rgba(200, 100, 255, 0.3);
+  background: rgba(200, 100, 255, 0.1);
+  color: rgba(200, 100, 255, 0.7);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.neat-tab:hover {
+  background: rgba(200, 100, 255, 0.2);
+}
+
+.neat-tab.active {
+  background: rgba(200, 100, 255, 0.3);
+  border-color: #c864ff;
+  color: #c864ff;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

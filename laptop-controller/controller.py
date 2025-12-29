@@ -95,61 +95,44 @@ neat_config_values = None  # Stores current NEAT config values
 balance_network = None  # Separate network for balance-only mode
 balance_genome_info = None  # Info about balance genome
 
-def get_neat_config():
-    """Read current NEAT config values from files"""
+NEAT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
+
+def load_training_config():
+    """Load training config from JSON file"""
+    try:
+        with open(NEAT_CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        # Default config
+        return {
+            "swing_up": {"pop_size": 100, "max_speed": 9000, "sim_steps": 2000},
+            "balance": {"pop_size": 100, "max_speed": 5000, "sim_steps": 5000}
+        }
+
+def save_training_config(config: dict):
+    """Save training config to JSON file"""
+    try:
+        with open(NEAT_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Error saving config: {e}")
+
+def get_neat_config(trainer_type: str = "swing_up"):
+    """Get config for a specific trainer type"""
     global neat_config_values
+    config = load_training_config()
     
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
-    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
-    
-    pop_size = 1000
-    fitness_threshold = 2000
-    max_speed = 100000
-    sim_steps = 2000
-    
-    # Read pop_size and fitness_threshold from neat_swing_up_config.txt
-    try:
-        with open(config_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('pop_size'):
-                    parts = line.split('=')
-                    if len(parts) == 2:
-                        pop_size = int(parts[1].strip())
-                elif line.startswith('fitness_threshold'):
-                    parts = line.split('=')
-                    if len(parts) == 2:
-                        fitness_threshold = float(parts[1].strip())
-    except Exception as e:
-        print(f"Error reading neat_swing_up_config.txt: {e}")
-    
-    # Read MAX_SPEED and SIMULATION_STEPS from neat_swing_up_trainer.py
-    try:
-        with open(trainer_path, 'r') as f:
-            for line in f:
-                line_stripped = line.strip()
-                if line_stripped.startswith('MAX_SPEED') and '=' in line_stripped:
-                    parts = line_stripped.split('=')
-                    if len(parts) >= 2:
-                        # Remove comments
-                        value = parts[1].split('#')[0].strip()
-                        max_speed = int(value)
-                if line_stripped.startswith('SIMULATION_STEPS') and '=' in line_stripped:
-                    parts = line_stripped.split('=')
-                    if len(parts) >= 2:
-                        value = parts[1].split('#')[0].strip()
-                        sim_steps = int(value)
-    except Exception as e:
-        print(f"Error reading neat_swing_up_trainer.py: {e}")
+    # Map tab names to config keys
+    key = "swing_up" if trainer_type in ["swing-up", "swing_up"] else "balance"
+    trainer_config = config.get(key, {"pop_size": 100, "max_speed": 9000, "sim_steps": 2000})
     
     neat_config_values = {
-        "pop_size": pop_size,
-        "max_speed": max_speed,
-        "fitness_threshold": fitness_threshold,
-        "sim_steps": sim_steps
+        "pop_size": trainer_config.get("pop_size", 100),
+        "max_speed": trainer_config.get("max_speed", 9000),
+        "sim_steps": trainer_config.get("sim_steps", 2000)
     }
     
-    print(f"NEAT Config loaded: pop={pop_size}, max_speed={max_speed}, sim_steps={sim_steps}", flush=True)
+    print(f"NEAT Config ({key}): pop={neat_config_values['pop_size']}, max_speed={neat_config_values['max_speed']}, sim_steps={neat_config_values['sim_steps']}", flush=True)
     
     return neat_config_values
 
@@ -683,71 +666,78 @@ async def stop_training():
     else:
         print("No training running")
 
-async def delete_best_genome():
-    """Delete the best genome file"""
-    global neat_network, best_genome_info
-    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
+async def delete_best_genome(trainer_type: str = "swing-up"):
+    """Delete the best genome file for the specified trainer type"""
+    global neat_network, best_genome_info, balance_network, balance_genome_info
+    
+    # Determine which genome file to delete
+    if trainer_type in ["swing-up", "swing_up"]:
+        genome_path = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
+        label = "swing-up"
+    else:
+        genome_path = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
+        label = "balance"
     
     if os.path.exists(genome_path):
         os.remove(genome_path)
-        neat_network = None
-        best_genome_info = None
-        print(f"Deleted best genome: {genome_path}", flush=True)
-        await broadcast_message({"type": "DELETE_RESULT", "success": True, "message": "Best genome deleted!"})
+        
+        # Clear the appropriate network and info
+        if trainer_type in ["swing-up", "swing_up"]:
+            neat_network = None
+            best_genome_info = None
+        else:
+            balance_network = None
+            balance_genome_info = None
+        
+        print(f"Deleted {label} genome: {genome_path}", flush=True)
+        await broadcast_message({"type": "DELETE_RESULT", "success": True, "message": f"{label} genome deleted!", "trainer": trainer_type})
     else:
-        print("No best genome to delete", flush=True)
-        await broadcast_message({"type": "DELETE_RESULT", "success": False, "message": "No best genome exists"})
+        print(f"No {label} genome to delete", flush=True)
+        await broadcast_message({"type": "DELETE_RESULT", "success": False, "message": f"No {label} genome exists"})
 
 async def update_neat_config(cmd: dict):
-    """Update NEAT training configuration"""
-    pop_size = cmd.get('pop_size', 1000)
-    max_speed = cmd.get('max_speed', 100000)
-    fitness_threshold = cmd.get('fitness_threshold', 2000)
+    """Update NEAT training configuration in JSON file"""
+    trainer_type = cmd.get('trainer', 'swing-up')
+    pop_size = cmd.get('pop_size', 100)
+    max_speed = cmd.get('max_speed', 9000)
     sim_steps = cmd.get('sim_steps', 2000)
     
-    # Update neat_swing_up_config.txt
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
+    # Map tab names to config keys
+    key = "swing_up" if trainer_type in ["swing-up", "swing_up"] else "balance"
     
     try:
-        with open(config_path, 'r') as f:
-            lines = f.readlines()
+        # Load existing config
+        config_data = load_training_config()
         
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith('pop_size'):
-                new_lines.append(f'pop_size              = {pop_size}\n')
-            elif line.strip().startswith('fitness_threshold'):
-                new_lines.append(f'fitness_threshold     = {fitness_threshold}\n')
-            else:
-                new_lines.append(line)
+        # Update the specific trainer config
+        config_data[key] = {
+            "pop_size": pop_size,
+            "max_speed": max_speed,
+            "sim_steps": sim_steps
+        }
         
-        with open(config_path, 'w') as f:
-            f.writelines(new_lines)
+        # Save to JSON
+        save_training_config(config_data)
         
-        # Update neat_swing_up_trainer.py constants (MAX_SPEED and SIMULATION_STEPS)
-        trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
-        with open(trainer_path, 'r') as f:
-            trainer_content = f.read()
+        # Update controller's neat_max_speed if this is the swing-up trainer
+        if key == "swing_up":
+            config.neat_max_speed = max_speed
         
-        import re
-        trainer_content = re.sub(r'MAX_SPEED\s*=\s*\d+', f'MAX_SPEED = {max_speed}', trainer_content)
-        trainer_content = re.sub(r'SIMULATION_STEPS\s*=\s*\d+', f'SIMULATION_STEPS = {sim_steps}', trainer_content)
-        
-        with open(trainer_path, 'w') as f:
-            f.write(trainer_content)
-        
-        # Update controller's neat_max_speed
-        config.neat_max_speed = max_speed
-        
-        # Update the cached config values
-        get_neat_config()
-        
-        print(f"NEAT config updated: pop={pop_size}, max_speed={max_speed}, threshold={fitness_threshold}, steps={sim_steps}", flush=True)
-        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "NEAT config updated!"})
+        print(f"NEAT config ({key}) updated: pop={pop_size}, max_speed={max_speed}, steps={sim_steps}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": f"{key} config updated!"})
         
     except Exception as e:
         print(f"Error updating NEAT config: {e}", flush=True)
         await broadcast_message({"type": "CONFIG_RESULT", "success": False, "message": str(e)})
+
+async def send_neat_config(websocket, trainer_type: str):
+    """Send NEAT config for a specific trainer type"""
+    config_data = get_neat_config(trainer_type)
+    await websocket.send(json.dumps({
+        "type": "NEAT_CONFIG_DATA",
+        "trainer": trainer_type,
+        **config_data
+    }))
 
 def upload_arduino_code():
     """Upload Arduino code using arduino-cli (runs in thread)"""
@@ -810,14 +800,14 @@ async def handle_websocket(websocket):
     
     try:
         async for message in websocket:
-            await handle_command(message)
+            await handle_command(message, websocket)
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
         ws_clients.discard(websocket)
         print(f"WebSocket client disconnected. Total: {len(ws_clients)}")
 
-async def handle_command(message: str):
+async def handle_command(message: str, websocket=None):
     """Handle command from web UI"""
     try:
         cmd = json.loads(message)
@@ -886,12 +876,18 @@ async def handle_command(message: str):
             await stop_training()
         
         elif cmd_type == "DELETE_BEST":
-            # Delete the best genome
-            await delete_best_genome()
+            # Delete the best genome for the specified trainer type
+            trainer_type = cmd.get('trainer', 'swing-up')
+            await delete_best_genome(trainer_type)
         
         elif cmd_type == "NEAT_CONFIG":
             # Update NEAT config
             await update_neat_config(cmd)
+        
+        elif cmd_type == "GET_NEAT_CONFIG":
+            # Get NEAT config for a specific trainer
+            trainer_type = cmd.get('trainer', 'swing-up')
+            await send_neat_config(websocket, trainer_type)
     
     except json.JSONDecodeError:
         print(f"Invalid command: {message}")
@@ -923,7 +919,8 @@ async def broadcast_state():
         "limit_right_pos": state.limit_right_pos,
         "mode": state.mode,
         "connected": state.connected,
-        "best_genome": best_genome_info,
+        "best_genome_swing_up": best_genome_info,
+        "best_genome_balance": balance_genome_info,
         "neat_config": neat_config_values
     })
     

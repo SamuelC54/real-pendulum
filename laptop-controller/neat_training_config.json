@@ -1,0 +1,12 @@
+{
+  "swing_up": {
+    "pop_size": 100,
+    "max_speed": 9000,
+    "sim_steps": 2000
+  },
+  "balance": {
+    "pop_size": 150,
+    "max_speed": 5000,
+    "sim_steps": 5000
+  }
+}
