@@ -8,6 +8,77 @@
   </head>
   <body>
     <div id="app">
+      <!-- Left Panel: NEAT Training -->
+      <div id="neat-panel">
+        <h2>🧬 NEAT Training</h2>
+        
+        <div class="control-row">
+          <button id="btn-start-training" class="control-btn neat-btn">
+            🚀 Start
+          </button>
+          <button id="btn-stop-training" class="control-btn stop-btn" style="display: none;">
+            ⏹ Stop
+          </button>
+        </div>
+        
+        <div class="control-row">
+          <button id="btn-save-best" class="control-btn save-btn">
+            💾 Save Best
+          </button>
+        </div>
+        
+        <div class="training-stats">
+          <div class="stat-row">
+            <span class="stat-label">Generation:</span>
+            <span id="train-generation" class="stat-value">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Best Fitness:</span>
+            <span id="train-best-fitness" class="stat-value">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Avg Fitness:</span>
+            <span id="train-avg-fitness" class="stat-value">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Species:</span>
+            <span id="train-species" class="stat-value">0</span>
+          </div>
+        </div>
+        
+        <div class="fitness-graph">
+          <canvas id="fitness-canvas" width="280" height="80"></canvas>
+        </div>
+        
+        <h3>NEAT Config</h3>
+        
+        <div class="config-row">
+          <label>Population</label>
+          <input type="number" id="neat-pop-size" value="1000" min="10" max="5000">
+        </div>
+        
+        <div class="config-row">
+          <label>Max Speed</label>
+          <input type="number" id="neat-max-speed" value="100000" min="1000" max="500000" step="1000">
+        </div>
+        
+        <div class="config-row">
+          <label>Fitness Target</label>
+          <input type="number" id="neat-fitness-threshold" value="2000" min="100" max="10000">
+        </div>
+        
+        <div class="config-row">
+          <label>Sim Steps</label>
+          <input type="number" id="neat-sim-steps" value="2000" min="100" max="10000" step="100">
+        </div>
+        
+        <div class="control-row" style="margin-top: 8px;">
+          <button id="btn-apply-neat-config" class="control-btn">
+            Apply Config
+          </button>
+        </div>
+      </div>
+      
       <div id="pendulum-container" class="disconnected">
         <div id="loading-spinner" class="loading-spinner">
           <div class="spinner"></div>
@@ -99,44 +170,6 @@
             </button>
           </div>
           <div id="upload-status"></div>
-          
-          <!-- Training Progress -->
-          <div id="training-section" class="training-section">
-            <h3>🧬 NEAT Training</h3>
-            <div class="control-row" style="margin-bottom: 12px;">
-              <button id="btn-start-training" class="control-btn neat-btn">
-                🚀 Start Training
-              </button>
-              <button id="btn-stop-training" class="control-btn stop-btn" style="display: none;">
-                ⏹ Stop
-              </button>
-            </div>
-            <div class="training-stats">
-              <div class="stat-row">
-                <span class="stat-label">Generation:</span>
-                <span id="train-generation" class="stat-value">0</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Best Fitness:</span>
-                <span id="train-best-fitness" class="stat-value">0</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Avg Fitness:</span>
-                <span id="train-avg-fitness" class="stat-value">0</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Species:</span>
-                <span id="train-species" class="stat-value">0</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Population:</span>
-                <span id="train-population" class="stat-value">0</span>
-              </div>
-            </div>
-            <div class="fitness-graph">
-              <canvas id="fitness-canvas" width="300" height="100"></canvas>
-            </div>
-          </div>
         </div>
 
         <div id="config">

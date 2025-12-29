@@ -288,10 +288,30 @@ function sendStopTraining() {
   }
 }
 
+function sendSaveBest() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'SAVE_BEST' }));
+  }
+}
+
+function sendNeatConfig() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const popSize = (document.getElementById('neat-pop-size') as HTMLInputElement)?.value || '1000';
+    const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '100000';
+    const fitnessThreshold = (document.getElementById('neat-fitness-threshold') as HTMLInputElement)?.value || '2000';
+    const simSteps = (document.getElementById('neat-sim-steps') as HTMLInputElement)?.value || '2000';
+    
+    ws.send(JSON.stringify({ 
+      type: 'NEAT_CONFIG',
+      pop_size: parseInt(popSize),
+      max_speed: parseInt(maxSpeed),
+      fitness_threshold: parseFloat(fitnessThreshold),
+      sim_steps: parseInt(simSteps)
+    }));
+  }
+}
+
 function updateTrainingDisplay(data: any) {
-  const section = document.getElementById('training-section');
-  if (!section) return;
-  
   // Show training is active
   trainingActive = true;
   const startBtn = document.getElementById('btn-start-training');
@@ -389,6 +409,26 @@ if (stopTrainingBtn) {
       stopTrainingBtn.style.display = 'none';
       if (startTrainingBtn) startTrainingBtn.style.display = 'block';
       trainingActive = false;
+    }
+  });
+}
+
+// Save best button
+const saveBestBtn = document.getElementById('btn-save-best');
+if (saveBestBtn) {
+  saveBestBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendSaveBest();
+    }
+  });
+}
+
+// Apply NEAT config button
+const applyNeatConfigBtn = document.getElementById('btn-apply-neat-config');
+if (applyNeatConfigBtn) {
+  applyNeatConfigBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendNeatConfig();
     }
   });
 }

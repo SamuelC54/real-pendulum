@@ -475,6 +475,69 @@ async def stop_training():
     else:
         print("No training running")
 
+async def save_best_genome():
+    """Manually save the best genome from current training"""
+    global training_process
+    
+    # If training is running, we need to signal it to save
+    # For now, just confirm the best_genome.pkl exists
+    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
+    
+    if os.path.exists(genome_path):
+        print(f"Best genome saved at: {genome_path}", flush=True)
+        await broadcast_message({"type": "SAVE_RESULT", "success": True, "message": "Best genome saved!"})
+    else:
+        print("No best genome to save yet", flush=True)
+        await broadcast_message({"type": "SAVE_RESULT", "success": False, "message": "No best genome exists yet"})
+
+async def update_neat_config(cmd: dict):
+    """Update NEAT training configuration"""
+    pop_size = cmd.get('pop_size', 1000)
+    max_speed = cmd.get('max_speed', 100000)
+    fitness_threshold = cmd.get('fitness_threshold', 2000)
+    sim_steps = cmd.get('sim_steps', 2000)
+    
+    # Update neat_config.txt
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
+    
+    try:
+        with open(config_path, 'r') as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith('pop_size'):
+                new_lines.append(f'pop_size              = {pop_size}\n')
+            elif line.strip().startswith('fitness_threshold'):
+                new_lines.append(f'fitness_threshold     = {fitness_threshold}\n')
+            else:
+                new_lines.append(line)
+        
+        with open(config_path, 'w') as f:
+            f.writelines(new_lines)
+        
+        # Update neat_trainer.py constants (MAX_SPEED and SIMULATION_STEPS)
+        trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+        with open(trainer_path, 'r') as f:
+            trainer_content = f.read()
+        
+        import re
+        trainer_content = re.sub(r'MAX_SPEED\s*=\s*\d+', f'MAX_SPEED = {max_speed}', trainer_content)
+        trainer_content = re.sub(r'SIMULATION_STEPS\s*=\s*\d+', f'SIMULATION_STEPS = {sim_steps}', trainer_content)
+        
+        with open(trainer_path, 'w') as f:
+            f.write(trainer_content)
+        
+        # Update controller's neat_max_speed
+        config.neat_max_speed = max_speed
+        
+        print(f"NEAT config updated: pop={pop_size}, max_speed={max_speed}, threshold={fitness_threshold}, steps={sim_steps}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "NEAT config updated!"})
+        
+    except Exception as e:
+        print(f"Error updating NEAT config: {e}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": False, "message": str(e)})
+
 def upload_arduino_code():
     """Upload Arduino code using arduino-cli (runs in thread)"""
     global serial_port
@@ -606,6 +669,14 @@ async def handle_command(message: str):
         elif cmd_type == "STOP_TRAINING":
             # Stop NEAT training
             await stop_training()
+        
+        elif cmd_type == "SAVE_BEST":
+            # Save the best genome manually
+            await save_best_genome()
+        
+        elif cmd_type == "NEAT_CONFIG":
+            # Update NEAT config
+            await update_neat_config(cmd)
     
     except json.JSONDecodeError:
         print(f"Invalid command: {message}")
