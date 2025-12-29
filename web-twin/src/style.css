@@ -616,3 +616,51 @@ h2 {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
 }
+
+/* Training Section */
+.training-section {
+  margin-top: 20px;
+  padding: 15px;
+  background: rgba(200, 100, 255, 0.1);
+  border: 1px solid rgba(200, 100, 255, 0.3);
+  border-radius: 8px;
+}
+
+.training-section h3 {
+  margin: 0 0 12px 0;
+  color: #c864ff;
+  font-size: 1rem;
+}
+
+.training-stats {
+  display: grid;
+  gap: 6px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.stat-label {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.stat-value {
+  color: #c864ff;
+  font-weight: bold;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.fitness-graph {
+  margin-top: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 8px;
+}
+
+#fitness-canvas {
+  width: 100%;
+  height: 80px;
+}

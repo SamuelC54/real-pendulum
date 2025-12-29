@@ -85,7 +85,7 @@ class ControlConfig:
     balance_threshold: float = 30.0  # degrees from vertical to switch to balance
     
     # NEAT balance mode
-    neat_max_speed: int = 20000  # Max speed for NEAT controller
+    neat_max_speed: int = 100000  # Max speed for NEAT controller
 
 # Global state
 state = PendulumState()
@@ -515,6 +515,56 @@ async def do_upload_async():
     finally:
         upload_in_progress = False
 
+# ============ NEAT TRAINING ============
+training_process = None
+
+async def start_training():
+    """Start NEAT training in background process"""
+    global training_process
+    
+    if training_process and training_process.poll() is None:
+        print("Training already running!")
+        return
+    
+    print("Starting NEAT training...", flush=True)
+    
+    # Clear old checkpoints and genome
+    import shutil
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_checkpoints')
+    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
+    
+    if os.path.exists(checkpoint_dir):
+        shutil.rmtree(checkpoint_dir)
+    if os.path.exists(genome_path):
+        os.remove(genome_path)
+    
+    # Start training process
+    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+    training_process = subprocess.Popen(
+        [sys.executable, trainer_path],
+        cwd=os.path.dirname(__file__)
+    )
+    
+    await broadcast_message({"type": "TRAINING_STARTED"})
+
+async def stop_training():
+    """Stop NEAT training"""
+    global training_process
+    
+    if training_process and training_process.poll() is None:
+        print("Stopping NEAT training...", flush=True)
+        training_process.terminate()
+        training_process.wait(timeout=5)
+        training_process = None
+        
+        # Reload the best genome if it exists
+        global neat_network
+        load_neat_network()
+        
+        await broadcast_message({"type": "TRAINING_STOPPED"})
+    else:
+        print("No training running")
+
 def upload_arduino_code():
     """Upload Arduino code using arduino-cli (runs in thread)"""
     global serial_port
@@ -633,6 +683,19 @@ async def handle_command(message: str):
         elif cmd_type == "UPLOAD":
             # Run upload in background task
             asyncio.create_task(do_upload_async())
+        
+        elif cmd_type == "TRAINING":
+            # Forward training progress to all clients
+            print(f"Training update: Gen {cmd.get('generation', '?')}, Fitness {cmd.get('best_fitness', '?')}", flush=True)
+            await broadcast_message(cmd)
+        
+        elif cmd_type == "START_TRAINING":
+            # Start NEAT training in background
+            await start_training()
+        
+        elif cmd_type == "STOP_TRAINING":
+            # Stop NEAT training
+            await stop_training()
     
     except json.JSONDecodeError:
         print(f"Invalid command: {message}")
@@ -643,7 +706,9 @@ async def broadcast_message(msg: dict):
     """Send message to all connected WebSocket clients"""
     if ws_clients:
         data = json.dumps(msg)
-        await asyncio.gather(*[client.send(data) for client in ws_clients], return_exceptions=True)
+        # Copy the set to avoid "Set changed size during iteration"
+        clients = list(ws_clients)
+        await asyncio.gather(*[client.send(data) for client in clients], return_exceptions=True)
 
 async def broadcast_state():
     """Broadcast current state to all WebSocket clients"""
@@ -666,7 +731,9 @@ async def broadcast_state():
     
     # Send to each client, removing dead connections
     dead_clients = set()
-    for client in ws_clients:
+    # Copy the set to avoid "Set changed size during iteration"
+    clients = list(ws_clients)
+    for client in clients:
         try:
             await client.send(data)
         except websockets.exceptions.ConnectionClosed:

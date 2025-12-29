@@ -111,6 +111,44 @@
             </button>
           </div>
           <div id="upload-status"></div>
+          
+          <!-- Training Progress -->
+          <div id="training-section" class="training-section">
+            <h3>🧬 NEAT Training</h3>
+            <div class="control-row" style="margin-bottom: 12px;">
+              <button id="btn-start-training" class="control-btn neat-btn">
+                🚀 Start Training
+              </button>
+              <button id="btn-stop-training" class="control-btn stop-btn" style="display: none;">
+                ⏹ Stop
+              </button>
+            </div>
+            <div class="training-stats">
+              <div class="stat-row">
+                <span class="stat-label">Generation:</span>
+                <span id="train-generation" class="stat-value">0</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Best Fitness:</span>
+                <span id="train-best-fitness" class="stat-value">0</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Avg Fitness:</span>
+                <span id="train-avg-fitness" class="stat-value">0</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Species:</span>
+                <span id="train-species" class="stat-value">0</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-label">Population:</span>
+                <span id="train-population" class="stat-value">0</span>
+              </div>
+            </div>
+            <div class="fitness-graph">
+              <canvas id="fitness-canvas" width="300" height="100"></canvas>
+            </div>
+          </div>
         </div>
 
         <div id="config">

@@ -273,6 +273,89 @@ function showUploadStatus(message: string, type: 'uploading' | 'success' | 'erro
   }
 }
 
+// Training progress display
+let trainingActive = false;
+
+function sendStartTraining() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'START_TRAINING' }));
+  }
+}
+
+function sendStopTraining() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'STOP_TRAINING' }));
+  }
+}
+
+function updateTrainingDisplay(data: any) {
+  const section = document.getElementById('training-section');
+  if (!section) return;
+  
+  // Show training is active
+  trainingActive = true;
+  const startBtn = document.getElementById('btn-start-training');
+  const stopBtn = document.getElementById('btn-stop-training');
+  if (startBtn) startBtn.style.display = 'none';
+  if (stopBtn) stopBtn.style.display = 'block';
+  
+  // Update stats
+  const genEl = document.getElementById('train-generation');
+  const bestEl = document.getElementById('train-best-fitness');
+  const avgEl = document.getElementById('train-avg-fitness');
+  const speciesEl = document.getElementById('train-species');
+  const popEl = document.getElementById('train-population');
+  
+  if (genEl) genEl.textContent = data.generation?.toString() || '0';
+  if (bestEl) bestEl.textContent = data.best_fitness?.toFixed(1) || '0';
+  if (avgEl) avgEl.textContent = data.avg_fitness?.toFixed(1) || '0';
+  if (speciesEl) speciesEl.textContent = data.species_count?.toString() || '0';
+  if (popEl) popEl.textContent = data.population_size?.toString() || '0';
+  
+  // Draw fitness graph
+  const canvas = document.getElementById('fitness-canvas') as HTMLCanvasElement;
+  if (canvas && data.fitness_history && data.fitness_history.length > 0) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const w = canvas.width;
+      const h = canvas.height;
+      
+      // Clear
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fillRect(0, 0, w, h);
+      
+      // Find min/max for scaling
+      const history = data.fitness_history;
+      const maxFit = Math.max(...history, 1);
+      const minFit = Math.min(...history, 0);
+      const range = maxFit - minFit || 1;
+      
+      // Draw line
+      ctx.strokeStyle = '#c864ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      
+      for (let i = 0; i < history.length; i++) {
+        const x = (i / (history.length - 1 || 1)) * w;
+        const y = h - ((history[i] - minFit) / range) * h * 0.9 - h * 0.05;
+        
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      
+      // Draw current value
+      ctx.fillStyle = '#c864ff';
+      ctx.font = '10px monospace';
+      ctx.fillText(`${maxFit.toFixed(0)}`, 2, 12);
+      ctx.fillText(`${minFit.toFixed(0)}`, 2, h - 2);
+    }
+  }
+}
+
 if (uploadBtn) {
   uploadBtn.addEventListener('click', () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -281,6 +364,31 @@ if (uploadBtn) {
       sendUpload();
     } else {
       showUploadStatus('Not connected to controller', 'error');
+    }
+  });
+}
+
+// Training buttons
+const startTrainingBtn = document.getElementById('btn-start-training');
+const stopTrainingBtn = document.getElementById('btn-stop-training');
+
+if (startTrainingBtn) {
+  startTrainingBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendStartTraining();
+      startTrainingBtn.style.display = 'none';
+      if (stopTrainingBtn) stopTrainingBtn.style.display = 'block';
+    }
+  });
+}
+
+if (stopTrainingBtn) {
+  stopTrainingBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendStopTraining();
+      stopTrainingBtn.style.display = 'none';
+      if (startTrainingBtn) startTrainingBtn.style.display = 'block';
+      trainingActive = false;
     }
   });
 }
@@ -385,6 +493,29 @@ function connect() {
           } else {
             showUploadStatus('✗ ' + (data.message || 'Upload failed'), 'error');
           }
+        }
+        
+        // Handle training progress
+        if (data.type === 'TRAINING') {
+          updateTrainingDisplay(data);
+        }
+        
+        if (data.type === 'TRAINING_STARTED') {
+          console.log('Training started');
+          trainingActive = true;
+          const startBtn = document.getElementById('btn-start-training');
+          const stopBtn = document.getElementById('btn-stop-training');
+          if (startBtn) startBtn.style.display = 'none';
+          if (stopBtn) stopBtn.style.display = 'block';
+        }
+        
+        if (data.type === 'TRAINING_STOPPED') {
+          console.log('Training stopped');
+          trainingActive = false;
+          const startBtn = document.getElementById('btn-start-training');
+          const stopBtn = document.getElementById('btn-stop-training');
+          if (startBtn) startBtn.style.display = 'block';
+          if (stopBtn) stopBtn.style.display = 'none';
         }
         
       } catch (e) {

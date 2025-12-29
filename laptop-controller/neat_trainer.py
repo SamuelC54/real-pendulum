@@ -25,7 +25,62 @@ import math
 import pickle
 import neat
 import time
+import json
+import asyncio
+import websockets
+import threading
 from simulator import PendulumSimulator, SimulatorConfig
+
+# WebSocket for sending training progress to web interface
+WS_URL = "ws://127.0.0.1:8765"
+ws_loop = None
+ws_connection = None
+training_stats = {
+    "generation": 0,
+    "best_fitness": 0,
+    "avg_fitness": 0,
+    "species_count": 0,
+    "population_size": 0,
+    "fitness_history": []
+}
+
+def send_training_update():
+    """Send training stats to web interface via WebSocket"""
+    global ws_connection, ws_loop
+    try:
+        if ws_connection and ws_loop:
+            msg = json.dumps({"type": "TRAINING", **training_stats})
+            future = asyncio.run_coroutine_threadsafe(ws_connection.send(msg), ws_loop)
+            future.result(timeout=1.0)  # Wait up to 1 second
+    except Exception as e:
+        # Silently ignore errors - web interface might not be open
+        pass
+
+async def ws_runner():
+    """Run WebSocket connection and keep it alive"""
+    global ws_connection
+    try:
+        ws_connection = await websockets.connect(WS_URL)
+        print(f"Connected to WebSocket at {WS_URL}")
+        # Keep connection alive until cancelled
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        if ws_connection:
+            await ws_connection.close()
+    except Exception as e:
+        print(f"WebSocket not available - training progress won't be shown in web interface")
+        ws_connection = None
+
+def start_ws_thread():
+    """Run WebSocket event loop in background thread"""
+    global ws_loop
+    ws_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(ws_loop)
+    try:
+        ws_loop.run_until_complete(ws_runner())
+    except:
+        pass
 
 # Training parameters
 MAX_SPEED = 100000          # Max cart velocity for training
@@ -208,6 +263,37 @@ def eval_genomes(genomes, config):
         genome.fitness = evaluate_genome(genome, config)
 
 
+class WebSocketReporter(neat.reporting.BaseReporter):
+    """Reporter that sends training stats to WebSocket"""
+    
+    def __init__(self):
+        self.generation = 0
+    
+    def start_generation(self, generation):
+        self.generation = generation
+    
+    def post_evaluate(self, config, population, species_set, best_genome):
+        """Called after each generation's evaluation"""
+        global training_stats
+        
+        # Calculate stats
+        fitnesses = [g.fitness for g in population.values() if g.fitness is not None]
+        
+        training_stats["generation"] = self.generation
+        training_stats["best_fitness"] = best_genome.fitness if best_genome.fitness else 0
+        training_stats["avg_fitness"] = sum(fitnesses) / len(fitnesses) if fitnesses else 0
+        training_stats["species_count"] = len(species_set.species)
+        training_stats["population_size"] = len(population)
+        
+        # Keep last 100 fitness values for graph
+        training_stats["fitness_history"].append(training_stats["best_fitness"])
+        if len(training_stats["fitness_history"]) > 100:
+            training_stats["fitness_history"] = training_stats["fitness_history"][-100:]
+        
+        # Send to WebSocket
+        send_training_update()
+
+
 def run_training(continue_from_checkpoint=False):
     """Run the NEAT training"""
     print("=" * 60)
@@ -238,10 +324,16 @@ def run_training(continue_from_checkpoint=False):
     else:
         pop = neat.Population(config)
     
+    # Try to connect to WebSocket for live updates
+    ws_thread = threading.Thread(target=start_ws_thread, daemon=True)
+    ws_thread.start()
+    time.sleep(0.5)  # Give time to connect
+    
     # Add reporters
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
+    pop.add_reporter(WebSocketReporter())  # Send updates to web interface
     
     # Create checkpoint directory
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
