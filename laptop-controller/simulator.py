@@ -114,6 +114,7 @@ class PendulumSimulator:
         
         # --- Cart dynamics ---
         # Accelerate towards target velocity
+        old_cart_velocity = self.cart_velocity
         velocity_error = self.target_velocity - self.cart_velocity
         max_accel_change = self.config.motor_accel * dt
         
@@ -122,9 +123,9 @@ class PendulumSimulator:
         else:
             self.cart_velocity += math.copysign(max_accel_change, velocity_error)
         
-        # Calculate cart acceleration (for pendulum coupling)
-        cart_accel = velocity_error / dt if dt > 0 else 0
-        cart_accel = max(-self.config.motor_accel, min(self.config.motor_accel, cart_accel))
+        # Calculate ACTUAL cart acceleration (for pendulum coupling)
+        # This is the real acceleration that was applied, not the desired one
+        cart_accel = (self.cart_velocity - old_cart_velocity) / dt if dt > 0 else 0
         
         # Update cart position
         old_position = self.cart_position
@@ -149,9 +150,10 @@ class PendulumSimulator:
                     self.target_velocity = 0
         
         # --- Pendulum dynamics ---
-        # Convert cart acceleration from steps/s² to m/s² (rough approximation)
-        # Assuming ~100 steps/mm for a typical lead screw
-        steps_per_meter = 100000
+        # Convert cart acceleration from steps/s² to m/s²
+        # For belt drive: ~80000 steps/meter typical
+        # Lower value = stronger coupling (pendulum responds more to cart movement)
+        steps_per_meter = 20000  # Reduced for stronger pendulum response
         cart_accel_ms2 = cart_accel / steps_per_meter
         
         # Pendulum equation of motion:
