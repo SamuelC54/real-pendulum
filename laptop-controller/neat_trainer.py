@@ -91,8 +91,8 @@ def start_ws_thread():
         pass
 
 # Training parameters
-MAX_SPEED = 10000          # Max cart velocity for training
-SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
+MAX_SPEED = 10001          # Max cart velocity for training
+SIMULATION_STEPS = 1200    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
 # Paths

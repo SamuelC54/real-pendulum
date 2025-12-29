@@ -125,16 +125,16 @@ def get_neat_config():
     try:
         with open(trainer_path, 'r') as f:
             for line in f:
-                line = line.strip()
-                if line.startswith('MAX_SPEED'):
-                    parts = line.split('=')
-                    if len(parts) == 2:
+                line_stripped = line.strip()
+                if line_stripped.startswith('MAX_SPEED') and '=' in line_stripped:
+                    parts = line_stripped.split('=')
+                    if len(parts) >= 2:
                         # Remove comments
                         value = parts[1].split('#')[0].strip()
                         max_speed = int(value)
-                elif line.startswith('SIMULATION_STEPS'):
-                    parts = line.split('=')
-                    if len(parts) == 2:
+                if line_stripped.startswith('SIMULATION_STEPS') and '=' in line_stripped:
+                    parts = line_stripped.split('=')
+                    if len(parts) >= 2:
                         value = parts[1].split('#')[0].strip()
                         sim_steps = int(value)
     except Exception as e:
@@ -146,6 +146,8 @@ def get_neat_config():
         "fitness_threshold": fitness_threshold,
         "sim_steps": sim_steps
     }
+    
+    print(f"NEAT Config loaded: pop={pop_size}, max_speed={max_speed}, sim_steps={sim_steps}", flush=True)
     
     return neat_config_values
 
