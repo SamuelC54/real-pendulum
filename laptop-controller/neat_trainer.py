@@ -5,8 +5,8 @@ Uses neuroevolution to train a neural network that keeps the pendulum
 balanced upright (around 180°) by controlling cart velocity.
 
 Inputs (4):
-  - Pendulum angle (normalized, 180° = 0)
-  - Pendulum angular velocity (normalized)
+  - Angle from upright (normalized: 180° = 0, 0°/360° = ±1)
+  - Angular velocity (normalized)
   - Cart position (normalized)
   - Cart velocity (normalized)
 
@@ -92,7 +92,7 @@ def start_ws_thread():
         pass
 
 # Training parameters
-MAX_SPEED = 9001          # Max cart velocity for training
+MAX_SPEED = 10000          # Max cart velocity for training
 SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
@@ -135,13 +135,11 @@ def evaluate_genome(genome, config, visualize=False):
     - Exponential reward based on closeness to 180° (upright)
     - Big penalty for touching limits
     
-    Inputs (6):
-    - Angle from upright (normalized)
+    Inputs (4):
+    - Angle from upright (normalized: 180° = 0, 0°/360° = ±1)
     - Angular velocity (normalized)
     - Cart position (normalized)
     - Cart velocity (normalized)
-    - Distance to left limit (normalized, 0=at limit, 1=far)
-    - Distance to right limit (normalized, 0=at limit, 1=far)
     """
     # Create neural network from genome
     net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -180,9 +178,7 @@ def evaluate_genome(genome, config, visualize=False):
             normalize_angle(angle_deg),          # Angle from upright (-1 to 1)
             pendulum_velocity / 10.0,            # Angular velocity (normalized)
             cart_position / (rail_length / 2),   # Position (normalized)
-            cart_velocity / MAX_SPEED,           # Velocity (normalized)
-            dist_to_left,                        # Distance to left limit (0-1)
-            dist_to_right,                       # Distance to right limit (0-1)
+            cart_velocity / MAX_SPEED,           # Cart velocity (normalized)
         ]
         
         # Get network output

@@ -404,26 +404,13 @@ def compute_neat_balance() -> int:
     
     # Get rail limits for normalization
     rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
-    rail_length = rail_half * 2
     
-    # Distance to limits (0 = at limit, 1 = at opposite limit)
-    limit_left = state.limit_left_pos if state.limit_left_pos != 0 else -rail_half
-    limit_right = state.limit_right_pos if state.limit_right_pos != 0 else rail_half
-    dist_to_left = (state.position - limit_left) / rail_length
-    dist_to_right = (limit_right - state.position) / rail_length
-    
-    # Clamp distances to [0, 1]
-    dist_to_left = max(0.0, min(1.0, dist_to_left))
-    dist_to_right = max(0.0, min(1.0, dist_to_right))
-    
-    # Prepare inputs for neural network (6 inputs)
+    # Prepare inputs for neural network (4 inputs)
     inputs = [
         normalize_angle_for_neat(state.angle),           # Angle from upright
         state.angular_velocity / 500.0,                  # Angular velocity (normalized)
         state.position / rail_half,                      # Position (normalized)
-        state.velocity / config.neat_max_speed,          # Velocity (normalized)
-        dist_to_left,                                    # Distance to left limit
-        dist_to_right,                                   # Distance to right limit
+        state.velocity / config.neat_max_speed,          # Cart velocity (normalized)
     ]
     
     # Get network output

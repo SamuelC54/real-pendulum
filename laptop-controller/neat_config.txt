@@ -1,8 +1,8 @@
 [NEAT]
 fitness_criterion      = max
-fitness_threshold      = 2000
+fitness_threshold     = 2000
 no_fitness_termination = False
-pop_size               = 100
+pop_size              = 30
 reset_on_extinction    = False
 
 [DefaultGenome]
@@ -47,7 +47,7 @@ node_delete_prob        = 0.02
 
 # Network parameters
 num_hidden              = 0
-num_inputs              = 6
+num_inputs              = 4
 num_outputs             = 1
 
 # Node response options (required by neat-python)
