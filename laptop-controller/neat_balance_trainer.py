@@ -112,35 +112,46 @@ def evaluate_genome(genome, config):
     """
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     
-    # Create simulator
+    # Create simulator (no background thread for training)
     sim_config = create_fast_simulator()
-    
-    # State variables
-    cart_position = 0.0
-    cart_velocity = 0.0
-    target_velocity = 0.0
+    sim = PendulumSimulator(sim_config, start_background_thread=False)
     
     # Start pendulum at 180° (upright) with small random perturbation
     perturbation = random.uniform(-10, 10)  # ±10 degrees
-    pendulum_angle = math.radians(180 + perturbation)
-    pendulum_velocity = random.uniform(-0.5, 0.5)  # Small initial velocity
+    sim.set_state(
+        cart_position=0.0,
+        cart_velocity=0.0,
+        pendulum_angle=math.radians(180 + perturbation),
+        pendulum_velocity=random.uniform(-0.5, 0.5)  # Small initial velocity
+    )
     
-    # Limits
-    limit_left = -sim_config.rail_length_steps / 2
-    limit_right = sim_config.rail_length_steps / 2
-    rail_length = sim_config.rail_length_steps
+    # Get rail limits
+    state = sim.get_state()
+    if not isinstance(state, dict) or 'limit_right_pos' not in state or 'limit_left_pos' not in state:
+        # Fallback: use config values
+        rail_length = sim_config.rail_length_steps
+    else:
+        rail_length = state['limit_right_pos'] - state['limit_left_pos']
     
     fitness = 0.0
     
     for step in range(SIMULATION_STEPS):
-        # Get current state as neural network inputs
-        angle_deg = math.degrees(pendulum_angle) % 360
+        # Get current state from simulator
+        state = sim.get_state()
+        if not isinstance(state, dict):
+            print(f"ERROR: get_state() returned non-dict: {type(state)} = {state}", flush=True)
+            raise ValueError(f"Invalid state from simulator: {state}")
+        if 'pendulum_angle' not in state:
+            print(f"ERROR: get_state() missing 'pendulum_angle'. Keys: {list(state.keys())}", flush=True)
+            raise ValueError(f"Invalid state from simulator - missing pendulum_angle: {state}")
+        angle_deg = math.degrees(state['pendulum_angle']) % 360
         
+        # Prepare inputs for neural network
         inputs = [
-            normalize_angle(angle_deg),           # Angle from upright (-1 to 1)
-            pendulum_velocity / 10.0,             # Angular velocity (normalized)
-            cart_position / (rail_length / 2),    # Position (normalized)
-            cart_velocity / MAX_SPEED,            # Cart velocity (normalized)
+            normalize_angle(angle_deg),                          # Angle from upright (-1 to 1)
+            state['pendulum_velocity'] / 10.0,                    # Angular velocity (normalized)
+            state['cart_position'] / (rail_length / 2),          # Position (normalized)
+            state['cart_velocity'] / MAX_SPEED,                   # Cart velocity (normalized)
         ]
         
         # Get network output
@@ -148,77 +159,29 @@ def evaluate_genome(genome, config):
         target_velocity = output[0] * MAX_SPEED
         target_velocity = max(-MAX_SPEED, min(MAX_SPEED, target_velocity))
         
-        # --- Physics simulation ---
-        dt = EVAL_DT
-        
-        # Cart dynamics
-        velocity_error = target_velocity - cart_velocity
-        max_accel_change = sim_config.motor_accel * dt
-        
-        if abs(velocity_error) < max_accel_change:
-            cart_velocity = target_velocity
-        else:
-            cart_velocity += math.copysign(max_accel_change, velocity_error)
-        
-        cart_accel = velocity_error / dt if dt > 0 else 0
-        cart_accel = max(-sim_config.motor_accel, min(sim_config.motor_accel, cart_accel))
-        
-        cart_position += cart_velocity * dt
-        
-        # Check limits
-        hit_limit = False
-        if cart_position <= limit_left:
-            cart_position = limit_left
-            if cart_velocity < 0:
-                cart_velocity = 0
-            hit_limit = True
-        if cart_position >= limit_right:
-            cart_position = limit_right
-            if cart_velocity > 0:
-                cart_velocity = 0
-            hit_limit = True
-        
-        # Pendulum dynamics
-        steps_per_meter = 100000
-        cart_accel_ms2 = cart_accel / steps_per_meter
-        
-        L = sim_config.pendulum_length
-        g = sim_config.gravity
-        c = sim_config.damping
-        
-        gravity_term = -(g / L) * math.sin(pendulum_angle)
-        coupling_term = (cart_accel_ms2 / L) * math.cos(pendulum_angle)
-        damping_term = c * pendulum_velocity
-        
-        angular_accel = gravity_term + coupling_term - damping_term
-        pendulum_velocity += angular_accel * dt
-        pendulum_angle += pendulum_velocity * dt
-        
-        # Normalize angle
-        while pendulum_angle < 0:
-            pendulum_angle += 2 * math.pi
-        while pendulum_angle >= 2 * math.pi:
-            pendulum_angle -= 2 * math.pi
+        # Set target velocity and step physics
+        sim.set_target_velocity(target_velocity)
+        sim.step(EVAL_DT)
         
         # --- Fitness calculation ---
-        angle_deg = math.degrees(pendulum_angle)
+        state = sim.get_state()
+        angle_deg = math.degrees(state['pendulum_angle']) % 360
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
-
         
         # Simple fitness: +1 for each step within 30° of upright
         if angle_from_up < 0.167:  # 30°/180° ≈ 0.167
             fitness += 1.0
         
-        # Stop early if fell too far 
-        if angle_from_up > 0.5: 
-            print(f"Fell too far: {angle_deg}")
+        # Stop early if fell too far (past 45°)
+        if angle_from_up > 0.25:  # 45°/180° ≈ 0.25
             break
         
         # Stop if hit limit
-        if hit_limit:
+        if state['limit_left'] or state['limit_right']:
             fitness -= 100  # Penalty for hitting limit
             break
     
+    sim.close()
     return fitness
 
 
@@ -366,16 +329,25 @@ def test_best_genome():
     # Create network
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     
-    # Run simulation
+    # Create simulator
     sim_config = create_fast_simulator()
-    cart_position = 0.0
-    cart_velocity = 0.0
-    pendulum_angle = math.radians(180 + 5)  # Start 5° off vertical
-    pendulum_velocity = 0.0
+    sim = PendulumSimulator(sim_config, start_background_thread=False)
     
-    limit_left = -sim_config.rail_length_steps / 2
-    limit_right = sim_config.rail_length_steps / 2
-    rail_length = sim_config.rail_length_steps
+    # Start pendulum at 180° (upright) with small perturbation
+    sim.set_state(
+        cart_position=0.0,
+        cart_velocity=0.0,
+        pendulum_angle=math.radians(180 + 5),  # Start 5° off vertical
+        pendulum_velocity=0.0
+    )
+    
+    # Get rail limits
+    state = sim.get_state()
+    if 'limit_right_pos' not in state or 'limit_left_pos' not in state:
+        # Fallback: use config values
+        rail_length = sim_config.rail_length_steps
+    else:
+        rail_length = state['limit_right_pos'] - state['limit_left_pos']
     
     print("\nRunning simulation (Ctrl+C to stop)...")
     print("Time(s) | Angle(°) | Velocity | Cart Pos")
@@ -383,75 +355,40 @@ def test_best_genome():
     
     try:
         for step in range(SIMULATION_STEPS * 2):
-            angle_deg = math.degrees(pendulum_angle) % 360
+            # Get current state from simulator
+            state = sim.get_state()
+            angle_deg = math.degrees(state['pendulum_angle']) % 360
             
+            # Prepare inputs for neural network
             inputs = [
                 normalize_angle(angle_deg),
-                pendulum_velocity / 10.0,
-                cart_position / (rail_length / 2),
-                cart_velocity / MAX_SPEED,
+                state['pendulum_velocity'] / 10.0,
+                state['cart_position'] / (rail_length / 2),
+                state['cart_velocity'] / MAX_SPEED,
             ]
             
+            # Get network output
             output = net.activate(inputs)
             target_velocity = output[0] * MAX_SPEED
             target_velocity = max(-MAX_SPEED, min(MAX_SPEED, target_velocity))
             
-            # Physics update
-            dt = EVAL_DT
-            velocity_error = target_velocity - cart_velocity
-            max_accel_change = sim_config.motor_accel * dt
-            
-            if abs(velocity_error) < max_accel_change:
-                cart_velocity = target_velocity
-            else:
-                cart_velocity += math.copysign(max_accel_change, velocity_error)
-            
-            cart_accel = velocity_error / dt if dt > 0 else 0
-            cart_accel = max(-sim_config.motor_accel, min(sim_config.motor_accel, cart_accel))
-            
-            cart_position += cart_velocity * dt
-            
-            # Check limits
-            if cart_position <= limit_left:
-                cart_position = limit_left
-                if cart_velocity < 0:
-                    cart_velocity = 0
-            if cart_position >= limit_right:
-                cart_position = limit_right
-                if cart_velocity > 0:
-                    cart_velocity = 0
-            
-            # Pendulum physics
-            steps_per_meter = 100000
-            cart_accel_ms2 = cart_accel / steps_per_meter
-            
-            L = sim_config.pendulum_length
-            g = sim_config.gravity
-            c = sim_config.damping
-            
-            gravity_term = -(g / L) * math.sin(pendulum_angle)
-            coupling_term = (cart_accel_ms2 / L) * math.cos(pendulum_angle)
-            damping_term = c * pendulum_velocity
-            
-            angular_accel = gravity_term + coupling_term - damping_term
-            pendulum_velocity += angular_accel * dt
-            pendulum_angle += pendulum_velocity * dt
-            
-            while pendulum_angle < 0:
-                pendulum_angle += 2 * math.pi
-            while pendulum_angle >= 2 * math.pi:
-                pendulum_angle -= 2 * math.pi
+            # Set target velocity and step physics
+            sim.set_target_velocity(target_velocity)
+            sim.step(EVAL_DT)
             
             # Print every 0.5 seconds
             if step % 25 == 0:
-                time_s = step * dt
-                angle_display = math.degrees(pendulum_angle)
-                print(f"{time_s:7.1f} | {angle_display:8.1f} | {target_velocity:8.0f} | {cart_position:8.0f}")
+                state = sim.get_state()
+                time_s = step * EVAL_DT
+                angle_display = math.degrees(state['pendulum_angle'])
+                print(f"{time_s:7.1f} | {angle_display:8.1f} | {target_velocity:8.0f} | {state['cart_position']:8.0f}")
             
-            time.sleep(dt / 10)  # Speed up visualization
+            time.sleep(EVAL_DT / 10)  # Speed up visualization
             
     except KeyboardInterrupt:
         print("\nTest stopped.")
+    finally:
+        sim.close()
 
 
 if __name__ == "__main__":

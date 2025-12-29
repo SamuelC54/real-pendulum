@@ -48,7 +48,7 @@ class PendulumSimulator:
     Implements a serial-like interface for drop-in replacement.
     """
     
-    def __init__(self, config: Optional[SimulatorConfig] = None):
+    def __init__(self, config: Optional[SimulatorConfig] = None, start_background_thread: bool = True):
         self.config = config or SimulatorConfig()
         
         # Cart state (in steps)
@@ -75,18 +75,17 @@ class PendulumSimulator:
         self._last_physics_time = time.perf_counter()
         self._last_data_time = time.perf_counter()
         
-        # Start physics thread
-        self._running = True
-        self._physics_thread = threading.Thread(target=self._physics_loop, daemon=True)
-        self._physics_thread.start()
-        
-        # Queue initial ready message
-        self._queue_output("VELOCITY_MODE_READY\n")
-        
-        print("=== SIMULATOR MODE ===")
-        print(f"Rail: {self.config.rail_length_steps} steps")
-        print(f"Pendulum: {self.config.pendulum_length}m, {self.config.pendulum_mass}kg")
-        print("======================")
+        # Start physics thread (only if requested, e.g., for controller use)
+        self._running = start_background_thread
+        if start_background_thread:
+            self._physics_thread = threading.Thread(target=self._physics_loop, daemon=True)
+            self._physics_thread.start()
+            # Queue initial ready message
+            self._queue_output("VELOCITY_MODE_READY\n")
+            print("=== SIMULATOR MODE ===")
+            print(f"Rail: {self.config.rail_length_steps} steps")
+            print(f"Pendulum: {self.config.pendulum_length}m, {self.config.pendulum_mass}kg")
+            print("======================")
     
     def _physics_loop(self):
         """Main physics simulation loop running in background thread"""
@@ -297,11 +296,79 @@ class PendulumSimulator:
             self.pendulum_velocity = random.uniform(-0.3, 0.3)  # Small initial velocity
             print(f"Simulator: Pendulum set to {180 + perturbation:.1f}°")
     
+    # --- Training interface (manual physics stepping) ---
+    
+    def set_state(self, cart_position: float = None, cart_velocity: float = None,
+                  pendulum_angle: float = None, pendulum_velocity: float = None):
+        """Set simulator state directly (for training)"""
+        with self._lock:
+            if cart_position is not None:
+                self.cart_position = cart_position
+            if cart_velocity is not None:
+                self.cart_velocity = cart_velocity
+            if pendulum_angle is not None:
+                self.pendulum_angle = pendulum_angle
+            if pendulum_velocity is not None:
+                self.pendulum_velocity = pendulum_velocity
+    
+    def get_state(self):
+        """Get current simulator state (for training)"""
+        try:
+            if hasattr(self, '_lock') and self._lock is not None:
+                with self._lock:
+                    return {
+                        'cart_position': self.cart_position,
+                        'cart_velocity': self.cart_velocity,
+                        'pendulum_angle': self.pendulum_angle,
+                        'pendulum_velocity': self.pendulum_velocity,
+                        'limit_left': self.cart_position <= self.limit_left_pos,
+                        'limit_right': self.cart_position >= self.limit_right_pos,
+                        'limit_left_pos': self.limit_left_pos,
+                        'limit_right_pos': self.limit_right_pos,
+                    }
+            else:
+                # Fallback if lock not initialized
+                return {
+                    'cart_position': self.cart_position,
+                    'cart_velocity': self.cart_velocity,
+                    'pendulum_angle': self.pendulum_angle,
+                    'pendulum_velocity': self.pendulum_velocity,
+                    'limit_left': self.cart_position <= self.limit_left_pos,
+                    'limit_right': self.cart_position >= self.limit_right_pos,
+                    'limit_left_pos': self.limit_left_pos,
+                    'limit_right_pos': self.limit_right_pos,
+                }
+        except Exception as e:
+            # Emergency fallback - return current values without lock
+            return {
+                'cart_position': getattr(self, 'cart_position', 0.0),
+                'cart_velocity': getattr(self, 'cart_velocity', 0.0),
+                'pendulum_angle': getattr(self, 'pendulum_angle', 0.0),
+                'pendulum_velocity': getattr(self, 'pendulum_velocity', 0.0),
+                'limit_left': False,
+                'limit_right': False,
+                'limit_left_pos': getattr(self, 'limit_left_pos', -3750.0),
+                'limit_right_pos': getattr(self, 'limit_right_pos', 3750.0),
+            }
+    
+    def step(self, dt: float):
+        """
+        Manually step physics simulation (for training).
+        Call this instead of letting the background thread run.
+        """
+        with self._lock:
+            self._update_physics(dt)
+    
+    def set_target_velocity(self, velocity: float):
+        """Set target velocity for the cart"""
+        with self._lock:
+            self.target_velocity = velocity
+    
     def close(self):
         """Stop the simulator"""
         self._running = False
         self.is_open = False
-        if self._physics_thread.is_alive():
+        if hasattr(self, '_physics_thread') and self._physics_thread.is_alive():
             self._physics_thread.join(timeout=1.0)
     
     def reset_input_buffer(self):
@@ -324,17 +391,7 @@ class PendulumSimulator:
         """Give the pendulum an angular velocity push"""
         self.pendulum_velocity = math.radians(velocity_deg_per_sec)
     
-    def get_state(self) -> dict:
-        """Get current simulation state"""
-        return {
-            'cart_position': self.cart_position,
-            'cart_velocity': self.cart_velocity,
-            'target_velocity': self.target_velocity,
-            'pendulum_angle_deg': math.degrees(self.pendulum_angle),
-            'pendulum_velocity_deg': math.degrees(self.pendulum_velocity),
-            'limit_left': self.cart_position <= self.limit_left_pos + 10,
-            'limit_right': self.cart_position >= self.limit_right_pos - 10,
-        }
+    # Removed duplicate get_state() method - using the one above with proper keys
 
 
 # Test the simulator standalone
