@@ -298,14 +298,12 @@ function sendNeatConfig() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     const popSize = (document.getElementById('neat-pop-size') as HTMLInputElement)?.value || '1000';
     const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '100000';
-    const fitnessThreshold = (document.getElementById('neat-fitness-threshold') as HTMLInputElement)?.value || '2000';
     const simSteps = (document.getElementById('neat-sim-steps') as HTMLInputElement)?.value || '2000';
     
     ws.send(JSON.stringify({ 
       type: 'NEAT_CONFIG',
       pop_size: parseInt(popSize),
       max_speed: parseInt(maxSpeed),
-      fitness_threshold: parseFloat(fitnessThreshold),
       sim_steps: parseInt(simSteps)
     }));
   }
@@ -340,7 +338,6 @@ function updateNeatConfigDisplay(config: any) {
   
   const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
   const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
-  const fitnessThresholdEl = document.getElementById('neat-fitness-threshold') as HTMLInputElement;
   const simStepsEl = document.getElementById('neat-sim-steps') as HTMLInputElement;
   
   if (popSizeEl && config.pop_size !== undefined) {
@@ -348,9 +345,6 @@ function updateNeatConfigDisplay(config: any) {
   }
   if (maxSpeedEl && config.max_speed !== undefined) {
     maxSpeedEl.value = config.max_speed.toString();
-  }
-  if (fitnessThresholdEl && config.fitness_threshold !== undefined) {
-    fitnessThresholdEl.value = config.fitness_threshold.toString();
   }
   if (simStepsEl && config.sim_steps !== undefined) {
     simStepsEl.value = config.sim_steps.toString();
