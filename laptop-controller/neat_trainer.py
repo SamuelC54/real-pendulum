@@ -242,14 +242,14 @@ def evaluate_genome(genome, config, visualize=False):
         angle_deg = math.degrees(pendulum_angle)
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
         
-        # Check if reached near 180° (within ±3°, which is ~0.017 normalized)
-        if angle_from_up < 0.5:  # Within 90° of 180° (the top of the pendulum)
-            reached_top = True
+        # # Check if reached near 180° 
+        # if angle_from_up < 0.1:  # Within 10° of 180°
+        #     reached_top = True
         
-        # If reached top and fell back down (past 90° from top), reset score
-        if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
-            fitness = 0
-            reached_top = False  # Reset to allow another attempt
+        # # If reached top and fell back down (past 90° from top), reset score
+        # if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
+        #     fitness = 0
+        #     reached_top = False  # Reset to allow another attempt
         
         # Exponential reward: more points when closer to 180°
         # closeness = 1 when at 180°, 0 when at 0°
@@ -260,6 +260,12 @@ def evaluate_genome(genome, config, visualize=False):
         # Big penalty for hitting limits
         if hit_limit:
             fitness -= 10.0
+
+        # Penalty for high angular velocity (encourages smooth control)
+        fitness -= 0.02 * abs(pendulum_velocity)
+
+        # Penalty for high cart velocity (encourages smooth control)
+        # fitness -= 0.00001 * abs(cart_velocity)
     
     return fitness
 
