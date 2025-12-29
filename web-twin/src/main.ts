@@ -311,6 +311,28 @@ function sendNeatConfig() {
   }
 }
 
+function updateBestGenomeDisplay(genome: any) {
+  const container = document.getElementById('best-genome-info');
+  const fitnessEl = document.getElementById('genome-fitness');
+  const nodesEl = document.getElementById('genome-nodes');
+  const connectionsEl = document.getElementById('genome-connections');
+  const savedAtEl = document.getElementById('genome-saved-at');
+  
+  if (genome) {
+    if (container) container.classList.remove('no-genome');
+    if (fitnessEl) fitnessEl.textContent = genome.fitness?.toFixed(1) || '-';
+    if (nodesEl) nodesEl.textContent = genome.nodes?.toString() || '-';
+    if (connectionsEl) connectionsEl.textContent = genome.connections?.toString() || '-';
+    if (savedAtEl) savedAtEl.textContent = genome.saved_at || '-';
+  } else {
+    if (container) container.classList.add('no-genome');
+    if (fitnessEl) fitnessEl.textContent = '-';
+    if (nodesEl) nodesEl.textContent = '-';
+    if (connectionsEl) connectionsEl.textContent = '-';
+    if (savedAtEl) savedAtEl.textContent = '-';
+  }
+}
+
 function updateTrainingDisplay(data: any) {
   // Show training is active
   trainingActive = true;
@@ -517,6 +539,9 @@ function connect() {
               maxPosition = data.limit_right_pos;
             }
           }
+          
+          // Update best genome info
+          updateBestGenomeDisplay(data.best_genome);
         }
         
         // Handle upload status messages

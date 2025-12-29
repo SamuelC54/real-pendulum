@@ -21,12 +21,6 @@
           </button>
         </div>
         
-        <div class="control-row">
-          <button id="btn-delete-best" class="control-btn stop-btn">
-            🗑️ Delete Best
-          </button>
-        </div>
-        
         <div class="training-stats">
           <div class="stat-row">
             <span class="stat-label">Generation:</span>
@@ -75,6 +69,33 @@
         <div class="control-row" style="margin-top: 8px;">
           <button id="btn-apply-neat-config" class="control-btn">
             Apply Config
+          </button>
+        </div>
+        
+        <h3>Best Genome</h3>
+        
+        <div id="best-genome-info" class="genome-info">
+          <div class="stat-row">
+            <span class="stat-label">Fitness:</span>
+            <span id="genome-fitness" class="stat-value">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Nodes:</span>
+            <span id="genome-nodes" class="stat-value">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Connections:</span>
+            <span id="genome-connections" class="stat-value">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Saved:</span>
+            <span id="genome-saved-at" class="stat-value">-</span>
+          </div>
+        </div>
+        
+        <div class="control-row" style="margin-top: 8px;">
+          <button id="btn-delete-best" class="control-btn delete-btn">
+            🗑️ Delete Best
           </button>
         </div>
       </div>

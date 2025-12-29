@@ -110,6 +110,34 @@ body {
   height: 70px;
 }
 
+.genome-info {
+  background: rgba(100, 200, 255, 0.08);
+  border: 1px solid rgba(100, 200, 255, 0.2);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.genome-info .stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.genome-info .stat-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.genome-info .stat-value {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.genome-info.no-genome {
+  opacity: 0.5;
+}
+
 .config-row {
   display: flex;
   justify-content: space-between;

@@ -90,19 +90,23 @@ last_angle = 180.0
 last_angle_time = time.perf_counter()
 
 # ============ NEAT NETWORK ============
+best_genome_info = None  # Stores info about the best saved genome
+
 def load_neat_network():
     """Load the trained NEAT network if available"""
-    global neat_network
+    global neat_network, best_genome_info
     
     genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
     config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
     
     if not os.path.exists(genome_path):
         print("NEAT: No trained network found (best_genome.pkl)")
+        best_genome_info = None
         return False
     
     if not os.path.exists(config_path):
         print("NEAT: Config file not found (neat_config.txt)")
+        best_genome_info = None
         return False
     
     try:
@@ -124,11 +128,33 @@ def load_neat_network():
         
         # Create network
         neat_network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
-        print(f"NEAT: Loaded trained network (fitness: {genome.fitness:.1f})")
+        
+        # Extract genome info for display
+        num_nodes = len(genome.nodes)
+        num_connections = len([c for c in genome.connections.values() if c.enabled])
+        num_inputs = len(neat_network.input_nodes)
+        num_outputs = len(neat_network.output_nodes)
+        
+        # Get file modification time
+        import datetime
+        mod_time = os.path.getmtime(genome_path)
+        mod_datetime = datetime.datetime.fromtimestamp(mod_time)
+        
+        best_genome_info = {
+            "fitness": genome.fitness,
+            "nodes": num_nodes,
+            "connections": num_connections,
+            "inputs": num_inputs,
+            "outputs": num_outputs,
+            "saved_at": mod_datetime.strftime("%Y-%m-%d %H:%M")
+        }
+        
+        print(f"NEAT: Loaded trained network (fitness: {genome.fitness:.1f}, nodes: {num_nodes}, conns: {num_connections})")
         return True
         
     except Exception as e:
         print(f"NEAT: Failed to load network: {e}")
+        best_genome_info = None
         return False
 
 def normalize_angle_for_neat(angle_deg):
@@ -477,12 +503,13 @@ async def stop_training():
 
 async def delete_best_genome():
     """Delete the best genome file"""
+    global neat_network, best_genome_info
     genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
     
     if os.path.exists(genome_path):
         os.remove(genome_path)
-        global neat_network
         neat_network = None
+        best_genome_info = None
         print(f"Deleted best genome: {genome_path}", flush=True)
         await broadcast_message({"type": "DELETE_RESULT", "success": True, "message": "Best genome deleted!"})
     else:
@@ -706,7 +733,8 @@ async def broadcast_state():
         "limit_left_pos": state.limit_left_pos,
         "limit_right_pos": state.limit_right_pos,
         "mode": state.mode,
-        "connected": state.connected
+        "connected": state.connected,
+        "best_genome": best_genome_info
     })
     
     # Send to each client, removing dead connections
