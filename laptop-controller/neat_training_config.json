@@ -5,8 +5,8 @@
     "sim_steps": 2000
   },
   "balance": {
-    "pop_size": 150,
-    "max_speed": 5000,
-    "sim_steps": 5000
+    "pop_size": 300,
+    "max_speed": 30000,
+    "sim_steps": 10000
   }
 }

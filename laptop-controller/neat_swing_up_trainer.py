@@ -32,13 +32,21 @@ import random
 import neat
 import time
 import json
-import asyncio
-# No websockets needed - using file-based communication
-import threading
-from simulator import PendulumSimulator, SimulatorConfig
+from simulator import PendulumSimulator
+from trainer_utils import (
+    normalize_angle,
+    create_fast_simulator,
+    load_training_params,
+    send_training_update,
+    eval_genomes as eval_genomes_base
+)
 
-# File-based communication for training progress
-TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
+# Paths
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
+BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
+
+# Training stats
 training_stats = {
     "generation": 0,
     "best_fitness": 0,
@@ -48,64 +56,11 @@ training_stats = {
     "running": True
 }
 
-def send_training_update():
-    """Write training stats to file for controller to read"""
-    try:
-        with open(TRAINING_STATUS_FILE, 'w') as f:
-            json.dump(training_stats, f)
-    except:
-        pass  # Just skip if file write fails
-
-# Paths
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
-BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
-TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
-
 # Load training parameters from JSON config
-def load_training_params():
-    try:
-        with open(TRAINING_CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-        swing_up = config.get('swing_up', {})
-        return {
-            'max_speed': swing_up.get('max_speed', 9000),
-            'sim_steps': swing_up.get('sim_steps', 2000),
-            'pop_size': swing_up.get('pop_size', 100)
-        }
-    except:
-        return {'max_speed': 9000, 'sim_steps': 2000, 'pop_size': 100}
-
-# Training parameters (loaded from JSON)
-_params = load_training_params()
+_params = load_training_params("swing_up")
 MAX_SPEED = _params['max_speed']
 SIMULATION_STEPS = _params['sim_steps']
 EVAL_DT = 0.02  # Evaluation timestep (50Hz)
-
-
-def normalize_angle(angle_deg):
-    """Normalize angle so 180° (upright) = 0, range [-1, 1]"""
-    # angle_deg: 0=down, 180=up
-    # We want: 180=0 (balanced), 0 or 360 = ±1 (fallen)
-    diff = angle_deg - 180.0
-    if diff > 180:
-        diff -= 360
-    elif diff < -180:
-        diff += 360
-    return diff / 180.0  # -1 to 1
-
-
-def create_fast_simulator():
-    """Create a simulator optimized for fast training"""
-    config = SimulatorConfig(
-        rail_length_steps=7500,
-        motor_accel=500000,  # Fast acceleration for training
-        pendulum_length=0.3,
-        pendulum_mass=0.1,
-        gravity=9.81,
-        damping=0.1,  # Some damping but not too much
-    )
-    return config
 
 
 eval_count = 0  # Global counter for logging
@@ -218,8 +173,7 @@ def evaluate_genome(genome, config, visualize=False):
 
 def eval_genomes(genomes, config):
     """Evaluate all genomes in the population"""
-    for genome_id, genome in genomes:
-        genome.fitness = evaluate_genome(genome, config)
+    eval_genomes_base(genomes, config, evaluate_genome)
 
 
 class WebSocketReporter(neat.reporting.BaseReporter):
@@ -268,7 +222,7 @@ class WebSocketReporter(neat.reporting.BaseReporter):
             }
         
         # Write status to file
-        send_training_update()
+        send_training_update(training_stats)
 
 
 def run_training(continue_from_checkpoint=False):

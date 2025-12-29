@@ -27,35 +27,21 @@ import random
 import neat
 import time
 import json
-from simulator import PendulumSimulator, SimulatorConfig
+from simulator import PendulumSimulator
+from trainer_utils import (
+    normalize_angle,
+    create_fast_simulator,
+    load_training_params,
+    send_training_update,
+    eval_genomes as eval_genomes_base
+)
 
 # Paths
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'neat_balance_config.txt')
 BEST_GENOME_PATH = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'neat_balance_checkpoints')
-TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
-TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
 
-# Load training parameters from JSON config
-def load_training_params():
-    try:
-        with open(TRAINING_CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-        balance = config.get('balance', {})
-        return {
-            'max_speed': balance.get('max_speed', 5000),
-            'sim_steps': balance.get('sim_steps', 5000),
-            'pop_size': balance.get('pop_size', 100)
-        }
-    except:
-        return {'max_speed': 5000, 'sim_steps': 5000, 'pop_size': 100}
-
-# Training parameters (loaded from JSON)
-_params = load_training_params()
-MAX_SPEED = _params['max_speed']
-SIMULATION_STEPS = _params['sim_steps']
-EVAL_DT = 0.02  # Evaluation timestep (50Hz)
-
+# Training stats
 training_stats = {
     "generation": 0,
     "best_fitness": 0,
@@ -65,42 +51,11 @@ training_stats = {
     "running": True
 }
 
-def send_training_update():
-    """Write training stats to file for controller to read"""
-    try:
-        with open(TRAINING_STATUS_FILE, 'w') as f:
-            json.dump(training_stats, f)
-    except:
-        pass
-
-
-def normalize_angle(angle_deg):
-    """
-    Normalize angle so 180° (upright) = 0, and 0°/360° (down) = ±1
-    """
-    # Shift so 180 becomes 0
-    shifted = angle_deg - 180.0
-    # Wrap to -180..180
-    while shifted > 180:
-        shifted -= 360
-    while shifted < -180:
-        shifted += 360
-    # Normalize to -1..1
-    return shifted / 180.0
-
-
-def create_fast_simulator():
-    """Create simulator config optimized for fast training"""
-    config = SimulatorConfig(
-        rail_length_steps=7500,
-        cart_mass=0.5,
-        motor_accel=500000,
-        pendulum_length=0.3,
-        pendulum_mass=0.1,
-        gravity=9.81,
-        damping=0.1,
-    )
-    return config
+# Load training parameters from JSON config
+_params = load_training_params("balance")
+MAX_SPEED = _params['max_speed']
+SIMULATION_STEPS = _params['sim_steps']
+EVAL_DT = 0.02  # Evaluation timestep (50Hz)
 
 
 def evaluate_genome(genome, config):
@@ -122,7 +77,7 @@ def evaluate_genome(genome, config):
         cart_position=0.0,
         cart_velocity=0.0,
         pendulum_angle=math.radians(180 + perturbation),
-        pendulum_velocity=random.uniform(-0.5, 0.5)  # Small initial velocity
+        pendulum_velocity=random.uniform(-.5, .5)  # Small initial velocity
     )
     
     # Get rail limits
@@ -172,13 +127,22 @@ def evaluate_genome(genome, config):
         if angle_from_up < 0.167:  # 30°/180° ≈ 0.167
             fitness += 1.0
         
+        # Bonus for being near center position (encourages staying in middle of rail)
+        # cart_position = state['cart_position']
+        # # Normalize position: 0 = center, ±1 = at limits
+        # normalized_pos = abs(cart_position / (rail_length / 2)) if rail_length > 0 else 0
+        # # Bonus: max 0.005 points when at center, decreases as you move away
+        # center_bonus = 0.05 * (1.0 - min(1.0, normalized_pos))
+        # fitness += center_bonus
+        
         # Stop early if fell too far (past 45°)
         if angle_from_up > 0.25:  # 45°/180° ≈ 0.25
+            fitness -= 100  # Penalty for falling too far
             break
         
         # Stop if hit limit
         if state['limit_left'] or state['limit_right']:
-            fitness -= 100  # Penalty for hitting limit
+            fitness = -100  # Penalty for hitting limit
             break
     
     sim.close()
@@ -187,8 +151,7 @@ def evaluate_genome(genome, config):
 
 def eval_genomes(genomes, config):
     """Evaluate all genomes in the population"""
-    for genome_id, genome in genomes:
-        genome.fitness = evaluate_genome(genome, config)
+    eval_genomes_base(genomes, config, evaluate_genome)
 
 
 class BalanceReporter(neat.reporting.BaseReporter):
@@ -237,7 +200,7 @@ class BalanceReporter(neat.reporting.BaseReporter):
             }
         
         # Write status to file
-        send_training_update()
+        send_training_update(training_stats)
 
 
 def run_training(continue_from_checkpoint=False):
