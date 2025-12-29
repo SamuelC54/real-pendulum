@@ -475,20 +475,19 @@ async def stop_training():
     else:
         print("No training running")
 
-async def save_best_genome():
-    """Manually save the best genome from current training"""
-    global training_process
-    
-    # If training is running, we need to signal it to save
-    # For now, just confirm the best_genome.pkl exists
+async def delete_best_genome():
+    """Delete the best genome file"""
     genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
     
     if os.path.exists(genome_path):
-        print(f"Best genome saved at: {genome_path}", flush=True)
-        await broadcast_message({"type": "SAVE_RESULT", "success": True, "message": "Best genome saved!"})
+        os.remove(genome_path)
+        global neat_network
+        neat_network = None
+        print(f"Deleted best genome: {genome_path}", flush=True)
+        await broadcast_message({"type": "DELETE_RESULT", "success": True, "message": "Best genome deleted!"})
     else:
-        print("No best genome to save yet", flush=True)
-        await broadcast_message({"type": "SAVE_RESULT", "success": False, "message": "No best genome exists yet"})
+        print("No best genome to delete", flush=True)
+        await broadcast_message({"type": "DELETE_RESULT", "success": False, "message": "No best genome exists"})
 
 async def update_neat_config(cmd: dict):
     """Update NEAT training configuration"""
@@ -670,9 +669,9 @@ async def handle_command(message: str):
             # Stop NEAT training
             await stop_training()
         
-        elif cmd_type == "SAVE_BEST":
-            # Save the best genome manually
-            await save_best_genome()
+        elif cmd_type == "DELETE_BEST":
+            # Delete the best genome
+            await delete_best_genome()
         
         elif cmd_type == "NEAT_CONFIG":
             # Update NEAT config

@@ -288,9 +288,9 @@ function sendStopTraining() {
   }
 }
 
-function sendSaveBest() {
+function sendDeleteBest() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'SAVE_BEST' }));
+    ws.send(JSON.stringify({ type: 'DELETE_BEST' }));
   }
 }
 
@@ -413,12 +413,12 @@ if (stopTrainingBtn) {
   });
 }
 
-// Save best button
-const saveBestBtn = document.getElementById('btn-save-best');
-if (saveBestBtn) {
-  saveBestBtn.addEventListener('click', () => {
+// Delete best button
+const deleteBestBtn = document.getElementById('btn-delete-best');
+if (deleteBestBtn) {
+  deleteBestBtn.addEventListener('click', () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      sendSaveBest();
+      sendDeleteBest();
     }
   });
 }

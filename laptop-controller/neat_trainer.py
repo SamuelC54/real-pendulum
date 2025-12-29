@@ -35,6 +35,7 @@ from simulator import PendulumSimulator, SimulatorConfig
 WS_URL = "ws://127.0.0.1:8765"
 ws_loop = None
 ws_connection = None
+ws_connected = False
 training_stats = {
     "generation": 0,
     "best_fitness": 0,
@@ -46,31 +47,38 @@ training_stats = {
 
 def send_training_update():
     """Send training stats to web interface via WebSocket"""
-    global ws_connection, ws_loop
+    global ws_connection, ws_loop, ws_connected
+    if not ws_connected or not ws_connection or not ws_loop:
+        return
     try:
-        if ws_connection and ws_loop:
-            msg = json.dumps({"type": "TRAINING", **training_stats})
-            future = asyncio.run_coroutine_threadsafe(ws_connection.send(msg), ws_loop)
-            future.result(timeout=1.0)  # Wait up to 1 second
-    except Exception as e:
-        # Silently ignore errors - web interface might not be open
-        pass
+        msg = json.dumps({"type": "TRAINING", **training_stats})
+        future = asyncio.run_coroutine_threadsafe(ws_connection.send(msg), ws_loop)
+        future.result(timeout=0.5)
+    except:
+        pass  # Just skip this update if it fails
 
 async def ws_runner():
-    """Run WebSocket connection and keep it alive"""
-    global ws_connection
+    """Run WebSocket connection - connect once and keep alive"""
+    global ws_connection, ws_connected
+    
+    # Try to connect once
     try:
-        ws_connection = await websockets.connect(WS_URL)
+        ws_connection = await websockets.connect(WS_URL, ping_interval=30, ping_timeout=20)
+        ws_connected = True
         print(f"Connected to WebSocket at {WS_URL}")
-        # Keep connection alive until cancelled
-        while True:
-            await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        if ws_connection:
-            await ws_connection.close()
+        
+        # Consume incoming messages to keep connection alive
+        # (controller broadcasts state to all clients)
+        async for message in ws_connection:
+            # Just discard incoming messages - we only send, not receive
+            pass
+                
+    except websockets.exceptions.ConnectionClosed:
+        print("WebSocket connection closed by server")
+        ws_connected = False
     except Exception as e:
-        print(f"WebSocket not available - training progress won't be shown in web interface")
-        ws_connection = None
+        print(f"WebSocket not available - training progress won't be shown")
+        ws_connected = False
 
 def start_ws_thread():
     """Run WebSocket event loop in background thread"""
@@ -264,10 +272,11 @@ def eval_genomes(genomes, config):
 
 
 class WebSocketReporter(neat.reporting.BaseReporter):
-    """Reporter that sends training stats to WebSocket"""
+    """Reporter that sends training stats to WebSocket and auto-saves best genome"""
     
     def __init__(self):
         self.generation = 0
+        self.best_fitness_ever = float('-inf')
     
     def start_generation(self, generation):
         self.generation = generation
@@ -278,12 +287,20 @@ class WebSocketReporter(neat.reporting.BaseReporter):
         
         # Calculate stats
         fitnesses = [g.fitness for g in population.values() if g.fitness is not None]
+        current_best = best_genome.fitness if best_genome.fitness else 0
         
         training_stats["generation"] = self.generation
-        training_stats["best_fitness"] = best_genome.fitness if best_genome.fitness else 0
+        training_stats["best_fitness"] = current_best
         training_stats["avg_fitness"] = sum(fitnesses) / len(fitnesses) if fitnesses else 0
         training_stats["species_count"] = len(species_set.species)
         training_stats["population_size"] = len(population)
+        
+        # Auto-save if this is a new best fitness
+        if current_best > self.best_fitness_ever:
+            self.best_fitness_ever = current_best
+            with open(BEST_GENOME_PATH, 'wb') as f:
+                pickle.dump(best_genome, f)
+            print(f"*** New best fitness: {current_best:.1f} - Auto-saved! ***")
         
         # Keep last 100 fitness values for graph
         training_stats["fitness_history"].append(training_stats["best_fitness"])
