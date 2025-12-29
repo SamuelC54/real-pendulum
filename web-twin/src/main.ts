@@ -306,13 +306,23 @@ function sendNeatConfig() {
     const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '9000';
     const simSteps = (document.getElementById('neat-sim-steps') as HTMLInputElement)?.value || '2000';
     
-    ws.send(JSON.stringify({ 
+    const config: any = {
       type: 'NEAT_CONFIG',
       trainer: selectedTrainingType,
       pop_size: parseInt(popSize),
       max_speed: parseInt(maxSpeed),
       sim_steps: parseInt(simSteps)
-    }));
+    };
+    
+    // Add perturbation parameters for balance trainer
+    if (selectedTrainingType === 'balance') {
+      const anglePert = (document.getElementById('neat-angle-perturbation') as HTMLInputElement)?.value;
+      const velPert = (document.getElementById('neat-velocity-perturbation') as HTMLInputElement)?.value;
+      if (anglePert) config.angle_perturbation = parseFloat(anglePert);
+      if (velPert) config.velocity_perturbation = parseFloat(velPert);
+    }
+    
+    ws.send(JSON.stringify(config));
   }
 }
 
@@ -326,6 +336,12 @@ function setupTabs() {
         selectedTrainingType = tabType;
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
+        
+        // Show/hide balance-specific perturbation config
+        const pertConfig = document.getElementById('balance-perturbation-config');
+        if (pertConfig) {
+          pertConfig.style.display = tabType === 'balance' ? 'block' : 'none';
+        }
         
         // Update best genome display for the selected tab
         const currentGenome = tabType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
@@ -364,9 +380,15 @@ function updateBestGenomeDisplay(genome: any) {
 }
 
 let neatConfigLoaded = false;
+let lastLoadedTrainer: string | null = null;
 
 function updateNeatConfigDisplay(config: any) {
-  if (!config || neatConfigLoaded) return;
+  if (!config) return;
+  
+  // Allow updating if switching to a different trainer type
+  if (neatConfigLoaded && lastLoadedTrainer === selectedTrainingType) {
+    return;
+  }
   
   const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
   const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
@@ -382,8 +404,22 @@ function updateNeatConfigDisplay(config: any) {
     simStepsEl.value = config.sim_steps.toString();
   }
   
-  // Only load once to avoid overwriting user changes
+  // Update perturbation parameters for balance trainer
+  if (selectedTrainingType === 'balance') {
+    const anglePertEl = document.getElementById('neat-angle-perturbation') as HTMLInputElement;
+    const velPertEl = document.getElementById('neat-velocity-perturbation') as HTMLInputElement;
+    
+    if (anglePertEl && config.angle_perturbation !== undefined) {
+      anglePertEl.value = config.angle_perturbation.toString();
+    }
+    if (velPertEl && config.velocity_perturbation !== undefined) {
+      velPertEl.value = config.velocity_perturbation.toString();
+    }
+  }
+  
+  // Track that we've loaded config for this trainer type
   neatConfigLoaded = true;
+  lastLoadedTrainer = selectedTrainingType;
 }
 
 function updateTrainingDisplay(data: any) {

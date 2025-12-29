@@ -57,6 +57,24 @@ MAX_SPEED = _params['max_speed']
 SIMULATION_STEPS = _params['sim_steps']
 EVAL_DT = 0.02  # Evaluation timestep (50Hz)
 
+# Perturbation parameters (reloadable during training)
+_last_loaded_pert = None
+
+def get_perturbation_params():
+    """Get current perturbation parameters from config (allows real-time updates)"""
+    global _last_loaded_pert
+    params = load_training_params("balance")
+    angle_pert = params.get('angle_perturbation', 10)
+    vel_pert = params.get('velocity_perturbation', 0.5)
+    # Print when values change or on first load
+    if _last_loaded_pert is None or _last_loaded_pert != (angle_pert, vel_pert):
+        print(f"[Perturbation] Loaded: angle={angle_pert}°, vel={vel_pert} rad/s", flush=True)
+        _last_loaded_pert = (angle_pert, vel_pert)
+    
+    return {
+        'angle_perturbation': angle_pert,
+        'velocity_perturbation': vel_pert
+    }
 
 def evaluate_genome(genome, config):
     """
@@ -71,13 +89,20 @@ def evaluate_genome(genome, config):
     sim_config = create_fast_simulator()
     sim = PendulumSimulator(sim_config, start_background_thread=False)
     
-    # Start pendulum at 180° (upright) with small random perturbation
-    perturbation = random.uniform(-10, 10)  # ±10 degrees
+    # Get current perturbation parameters (allows real-time adjustment)
+    pert_params = get_perturbation_params()
+    angle_pert = pert_params['angle_perturbation']
+    vel_pert = pert_params['velocity_perturbation']
+    
+    # Start pendulum at 180° (upright) with configurable random perturbation
+    angle_perturbation = random.uniform(-angle_pert, angle_pert)
+    velocity_perturbation = random.uniform(-vel_pert, vel_pert)
+    
     sim.set_state(
         cart_position=0.0,
         cart_velocity=0.0,
-        pendulum_angle=math.radians(180 + perturbation),
-        pendulum_velocity=random.uniform(-.5, .5)  # Small initial velocity
+        pendulum_angle=math.radians(180 + angle_perturbation),
+        pendulum_velocity=velocity_perturbation
     )
     
     # Get rail limits
@@ -146,6 +171,17 @@ def evaluate_genome(genome, config):
             break
     
     sim.close()
+    
+    # Fitness bonus for higher perturbations (encourages training with more challenging conditions)
+    # Use absolute values directly (not normalized)
+    # Angle perturbation: in degrees, Velocity perturbation: in rad/s
+    angle_pert_bonus = abs(angle_perturbation)
+    vel_pert_bonus = abs(velocity_perturbation) * 10
+    
+    # Bonus: angle perturbation in degrees + velocity perturbation in rad/s
+    perturbation_bonus = angle_pert_bonus + vel_pert_bonus
+    fitness += perturbation_bonus
+    
     return fitness
 
 

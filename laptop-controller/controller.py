@@ -114,6 +114,8 @@ def save_training_config(config: dict):
     try:
         with open(NEAT_CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
+            f.flush()  # Force immediate write to disk
+            os.fsync(f.fileno())  # Ensure OS writes to disk immediately
     except Exception as e:
         print(f"Error saving config: {e}")
 
@@ -132,7 +134,15 @@ def get_neat_config(trainer_type: str = "swing_up"):
         "sim_steps": trainer_config.get("sim_steps", 2000)
     }
     
-    print(f"NEAT Config ({key}): pop={neat_config_values['pop_size']}, max_speed={neat_config_values['max_speed']}, sim_steps={neat_config_values['sim_steps']}", flush=True)
+    # Add perturbation parameters for balance trainer
+    if key == "balance":
+        neat_config_values["angle_perturbation"] = trainer_config.get("angle_perturbation", 10)
+        neat_config_values["velocity_perturbation"] = trainer_config.get("velocity_perturbation", 0.5)
+    
+    msg = f"pop={neat_config_values['pop_size']}, max_speed={neat_config_values['max_speed']}, sim_steps={neat_config_values['sim_steps']}"
+    if key == "balance":
+        msg += f", angle_pert={neat_config_values.get('angle_perturbation', 10)}, vel_pert={neat_config_values.get('velocity_perturbation', 0.5)}"
+    print(f"NEAT Config ({key}): {msg}", flush=True)
     
     return neat_config_values
 
@@ -701,6 +711,8 @@ async def update_neat_config(cmd: dict):
     pop_size = cmd.get('pop_size', 100)
     max_speed = cmd.get('max_speed', 9000)
     sim_steps = cmd.get('sim_steps', 2000)
+    angle_perturbation = cmd.get('angle_perturbation')
+    velocity_perturbation = cmd.get('velocity_perturbation')
     
     # Map tab names to config keys
     key = "swing_up" if trainer_type in ["swing-up", "swing_up"] else "balance"
@@ -710,11 +722,20 @@ async def update_neat_config(cmd: dict):
         config_data = load_training_config()
         
         # Update the specific trainer config
-        config_data[key] = {
+        trainer_config = {
             "pop_size": pop_size,
             "max_speed": max_speed,
             "sim_steps": sim_steps
         }
+        
+        # Add perturbation parameters for balance trainer
+        if key == "balance":
+            if angle_perturbation is not None:
+                trainer_config["angle_perturbation"] = angle_perturbation
+            if velocity_perturbation is not None:
+                trainer_config["velocity_perturbation"] = velocity_perturbation
+        
+        config_data[key] = trainer_config
         
         # Save to JSON
         save_training_config(config_data)
@@ -723,7 +744,10 @@ async def update_neat_config(cmd: dict):
         if key == "swing_up":
             config.neat_max_speed = max_speed
         
-        print(f"NEAT config ({key}) updated: pop={pop_size}, max_speed={max_speed}, steps={sim_steps}", flush=True)
+        msg = f"{key} config updated: pop={pop_size}, max_speed={max_speed}, steps={sim_steps}"
+        if key == "balance" and (angle_perturbation is not None or velocity_perturbation is not None):
+            msg += f", angle_pert={angle_perturbation or 'unchanged'}, vel_pert={velocity_perturbation or 'unchanged'}"
+        print(f"NEAT config ({key}) updated: {msg}", flush=True)
         await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": f"{key} config updated!"})
         
     except Exception as e:

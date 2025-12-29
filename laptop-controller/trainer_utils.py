@@ -57,7 +57,8 @@ def load_training_params(trainer_type: str = "swing_up"):
         trainer_type: Either "swing_up" or "balance"
     
     Returns:
-        Dict with max_speed, sim_steps, and pop_size
+        Dict with max_speed, sim_steps, pop_size, and optionally
+        angle_perturbation and velocity_perturbation for balance trainer
     """
     try:
         with open(TRAINING_CONFIG_FILE, 'r') as f:
@@ -65,17 +66,38 @@ def load_training_params(trainer_type: str = "swing_up"):
         trainer_config = config.get(trainer_type, {})
         defaults = {
             'swing_up': {'max_speed': 9000, 'sim_steps': 2000, 'pop_size': 100},
-            'balance': {'max_speed': 5000, 'sim_steps': 5000, 'pop_size': 100}
+            'balance': {
+                'max_speed': 5000, 
+                'sim_steps': 5000, 
+                'pop_size': 100,
+                'angle_perturbation': 10,
+                'velocity_perturbation': 0.5
+            }
         }
         default = defaults.get(trainer_type, defaults['swing_up'])
-        return {
+        result = {
             'max_speed': trainer_config.get('max_speed', default['max_speed']),
             'sim_steps': trainer_config.get('sim_steps', default['sim_steps']),
             'pop_size': trainer_config.get('pop_size', default['pop_size'])
         }
-    except:
-        # throw if not found
-        raise Exception(f"Training parameters not found for {trainer_type}")
+        # Add perturbation parameters for balance trainer
+        if trainer_type == 'balance':
+            result['angle_perturbation'] = trainer_config.get('angle_perturbation', default.get('angle_perturbation', 10))
+            result['velocity_perturbation'] = trainer_config.get('velocity_perturbation', default.get('velocity_perturbation', 0.5))
+        return result
+    except Exception as e:
+        # Fallback defaults
+        defaults = {
+            'swing_up': {'max_speed': 9000, 'sim_steps': 2000, 'pop_size': 100},
+            'balance': {
+                'max_speed': 5000, 
+                'sim_steps': 5000, 
+                'pop_size': 100,
+                'angle_perturbation': 10,
+                'velocity_perturbation': 0.5
+            }
+        }
+        return defaults.get(trainer_type, defaults['swing_up'])
 
 
 def send_training_update(training_stats: dict):
