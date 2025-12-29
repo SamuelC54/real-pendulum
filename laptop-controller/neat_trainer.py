@@ -127,7 +127,10 @@ def create_fast_simulator():
     return config
 
 
+eval_count = 0  # Global counter for logging
+
 def evaluate_genome(genome, config, visualize=False):
+    global eval_count
     """
     Evaluate a single genome by running it in the simulator.
     
@@ -165,6 +168,8 @@ def evaluate_genome(genome, config, visualize=False):
     
     fitness = 0.0
     reached_top = False  # Track if pendulum reached near 180°
+    net_rotation = 0.0  # Track net rotation (positive = clockwise, negative = counter)
+    last_angle_rad = pendulum_angle
     
     for step in range(SIMULATION_STEPS):
         # Get current state as neural network inputs
@@ -240,6 +245,11 @@ def evaluate_genome(genome, config, visualize=False):
         
         # --- Fitness calculation ---
         angle_deg = math.degrees(pendulum_angle)
+        
+        # Track net rotation using angular velocity
+        # This properly accounts for direction and doesn't double-count oscillations
+        net_rotation += pendulum_velocity * dt
+        
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
         
         # # Check if reached near 180° 
@@ -262,10 +272,20 @@ def evaluate_genome(genome, config, visualize=False):
             fitness -= 10.0
 
         # Penalty for high angular velocity (encourages smooth control)
-        fitness -= 0.02 * abs(pendulum_velocity)
+        # fitness -= 0.02 * abs(pendulum_velocity)
 
         # Penalty for high cart velocity (encourages smooth control)
         # fitness -= 0.00001 * abs(cart_velocity)
+    
+    # Count full rotations (2*pi radians = 1 full loop)
+    full_rotations = abs(net_rotation) / (2 * math.pi)
+    
+    # Penalty for doing more than 2 full rotations in either direction
+    if full_rotations > 2:
+        fitness -= 50.0 * (full_rotations - 2)
+    
+    # Debug: log rotation
+    # print(f"Genome {genome.key}: rotations={full_rotations:.1f}, fitness={fitness:.1f}")
     
     return fitness
 
