@@ -510,15 +510,14 @@ async def start_training():
     
     print("Starting NEAT training...", flush=True)
     
-    # Clear old checkpoints and genome
+    # Clear old checkpoints and status file
     import shutil
     checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_checkpoints')
-    genome_path = os.path.join(os.path.dirname(__file__), 'best_genome.pkl')
     
     if os.path.exists(checkpoint_dir):
         shutil.rmtree(checkpoint_dir)
-    if os.path.exists(genome_path):
-        os.remove(genome_path)
+    if os.path.exists(TRAINING_STATUS_FILE):
+        os.remove(TRAINING_STATUS_FILE)
     
     # Start training process
     trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
@@ -531,13 +530,18 @@ async def start_training():
 
 async def stop_training():
     """Stop NEAT training"""
-    global training_process
+    global training_process, last_training_status
     
     if training_process and training_process.poll() is None:
         print("Stopping NEAT training...", flush=True)
         training_process.terminate()
         training_process.wait(timeout=5)
         training_process = None
+        
+        # Clean up status file
+        if os.path.exists(TRAINING_STATUS_FILE):
+            os.remove(TRAINING_STATUS_FILE)
+        last_training_status = None
         
         # Reload the best genome if it exists
         global neat_network
@@ -732,11 +736,6 @@ async def handle_command(message: str):
             # Run upload in background task
             asyncio.create_task(do_upload_async())
         
-        elif cmd_type == "TRAINING":
-            # Forward training progress to all clients
-            print(f"Training update: Gen {cmd.get('generation', '?')}, Fitness {cmd.get('best_fitness', '?')}", flush=True)
-            await broadcast_message(cmd)
-        
         elif cmd_type == "START_TRAINING":
             # Start NEAT training in background
             await start_training()
@@ -803,6 +802,29 @@ async def broadcast_state():
     for client in dead_clients:
         ws_clients.discard(client)
 
+# ============ TRAINING STATUS FILE ============
+TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
+last_training_status = None
+
+async def check_training_status():
+    """Read training status from file and broadcast if changed"""
+    global last_training_status
+    
+    if not os.path.exists(TRAINING_STATUS_FILE):
+        return
+    
+    try:
+        with open(TRAINING_STATUS_FILE, 'r') as f:
+            status = json.load(f)
+        
+        # Only broadcast if changed
+        if status != last_training_status:
+            last_training_status = status
+            await broadcast_message({"type": "TRAINING", **status})
+            print(f"Training: Gen {status.get('generation', '?')}, Best {status.get('best_fitness', '?'):.1f}", flush=True)
+    except:
+        pass  # File might be being written
+
 # ============ MAIN CONTROL LOOP ============
 async def control_loop():
     """Main control loop running at CONTROL_RATE Hz"""
@@ -810,6 +832,7 @@ async def control_loop():
     interval = 1.0 / CONTROL_RATE
     broadcast_interval = 0.05  # 20Hz for WebSocket updates (not 100Hz)
     last_broadcast = 0
+    last_training_check = 0
     
     # Give WebSocket server time to start accepting connections
     print("Waiting for WebSocket to be ready...", flush=True)
@@ -847,6 +870,10 @@ async def control_loop():
             last_broadcast = now
             try:
                 await broadcast_state()
+                # Check training status file (every 0.5s)
+                if now - last_training_check >= 0.5:
+                    last_training_check = now
+                    await check_training_status()
             except Exception as e:
                 print(f"Broadcast error: {e}", flush=True)
         

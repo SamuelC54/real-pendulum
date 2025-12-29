@@ -10,6 +10,7 @@ build/
 
 # NEAT training
 neat_checkpoints/
+training_status.json
 
 # IDE
 .vscode/

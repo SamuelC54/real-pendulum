@@ -28,72 +28,32 @@ import neat
 import time
 import json
 import asyncio
-import websockets
+# No websockets needed - using file-based communication
 import threading
 from simulator import PendulumSimulator, SimulatorConfig
 
-# WebSocket for sending training progress to web interface
-WS_URL = "ws://127.0.0.1:8765"
-ws_loop = None
-ws_connection = None
-ws_connected = False
+# File-based communication for training progress
+TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
 training_stats = {
     "generation": 0,
     "best_fitness": 0,
     "avg_fitness": 0,
     "species_count": 0,
     "population_size": 0,
-    "fitness_history": []
+    "running": True
 }
 
 def send_training_update():
-    """Send training stats to web interface via WebSocket"""
-    global ws_connection, ws_loop, ws_connected
-    if not ws_connected or not ws_connection or not ws_loop:
-        return
+    """Write training stats to file for controller to read"""
     try:
-        msg = json.dumps({"type": "TRAINING", **training_stats})
-        future = asyncio.run_coroutine_threadsafe(ws_connection.send(msg), ws_loop)
-        future.result(timeout=0.5)
+        with open(TRAINING_STATUS_FILE, 'w') as f:
+            json.dump(training_stats, f)
     except:
-        pass  # Just skip this update if it fails
-
-async def ws_runner():
-    """Run WebSocket connection - connect once and keep alive"""
-    global ws_connection, ws_connected
-    
-    # Try to connect once
-    try:
-        ws_connection = await websockets.connect(WS_URL, ping_interval=30, ping_timeout=20)
-        ws_connected = True
-        print(f"Connected to WebSocket at {WS_URL}")
-        
-        # Consume incoming messages to keep connection alive
-        # (controller broadcasts state to all clients)
-        async for message in ws_connection:
-            # Just discard incoming messages - we only send, not receive
-            pass
-                
-    except websockets.exceptions.ConnectionClosed:
-        print("WebSocket connection closed by server")
-        ws_connected = False
-    except Exception as e:
-        print(f"WebSocket not available - training progress won't be shown")
-        ws_connected = False
-
-def start_ws_thread():
-    """Run WebSocket event loop in background thread"""
-    global ws_loop
-    ws_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(ws_loop)
-    try:
-        ws_loop.run_until_complete(ws_runner())
-    except:
-        pass
+        pass  # Just skip if file write fails
 
 # Training parameters
-MAX_SPEED = 10000          # Max cart velocity for training
-SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
+MAX_SPEED = 9000          # Max cart velocity for training
+SIMULATION_STEPS = 10000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
 # Paths
@@ -155,10 +115,10 @@ def evaluate_genome(genome, config, visualize=False):
     cart_velocity = 0.0
     target_velocity = 0.0
     
-    # Start pendulum at BOTTOM (0°) - must swing up!
-    pendulum_angle = math.radians(hash(str(genome.key)) % 10 - 5)  # Near 0° (down)
-    ### Start pendulum at random angle (0-360°)
-    ##pendulum_angle = math.radians(random.uniform(0, 360))
+    # # Start pendulum at BOTTOM (0°) - must swing up!
+    # pendulum_angle = math.radians(hash(str(genome.key)) % 10 - 5)  # Near 0° (down)
+    # Start pendulum at random angle (0-360°)
+    pendulum_angle = math.radians(random.uniform(0, 360))
     pendulum_velocity = 0.0
     
     # Limits
@@ -169,7 +129,9 @@ def evaluate_genome(genome, config, visualize=False):
     fitness = 0.0
     reached_top = False  # Track if pendulum reached near 180°
     net_rotation = 0.0  # Track net rotation (positive = clockwise, negative = counter)
-    last_angle_rad = pendulum_angle
+    max_angular_velocity = 0.0  # Track peak angular velocity
+    time_upright = 0  # Current streak of being upright
+    max_time_upright = 0  # Longest streak of being upright
     
     for step in range(SIMULATION_STEPS):
         # Get current state as neural network inputs
@@ -250,6 +212,10 @@ def evaluate_genome(genome, config, visualize=False):
         # This properly accounts for direction and doesn't double-count oscillations
         net_rotation += pendulum_velocity * dt
         
+        # Track max angular velocity
+        if abs(pendulum_velocity) > max_angular_velocity:
+            max_angular_velocity = abs(pendulum_velocity)
+        
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
         
         # # Check if reached near 180° 
@@ -266,26 +232,39 @@ def evaluate_genome(genome, config, visualize=False):
         closeness = 1.0 - angle_from_up
         reward = closeness ** 2  # Exponential (squared) - max 1.0 when at 180°
         fitness += reward
+
+        # time continuously upright
+        if angle_from_up < 0.5:  # 90°/180° ≈ 0.5
+            time_upright += 1
+            max_time_upright = max(max_time_upright, time_upright)
+        else:
+            time_upright = 0
         
         # Big penalty for hitting limits
         if hit_limit:
             fitness -= 10.0
 
-        # Penalty for high angular velocity (encourages smooth control)
-        # fitness -= 0.02 * abs(pendulum_velocity)
+        # # Penalty for excessive angular velocity (over 900°/s)
+        # angular_vel_deg = abs(math.degrees(pendulum_velocity))
+        # if angular_vel_deg > 900:
+        #     fitness -= 1 * (angular_vel_deg - 900)  # Penalty scales with excess
 
         # Penalty for high cart velocity (encourages smooth control)
         # fitness -= 0.00001 * abs(cart_velocity)
     
-    # Count full rotations (2*pi radians = 1 full loop)
-    full_rotations = abs(net_rotation) / (2 * math.pi)
+    # # Count full rotations (2*pi radians = 1 full loop)
+    # full_rotations = abs(net_rotation) / (2 * math.pi)
     
-    # Penalty for doing more than 2 full rotations in either direction
-    if full_rotations > 2:
-        fitness -= 50.0 * (full_rotations - 2)
+    # # Penalty for doing more than 2 full rotations in either direction
+    # if full_rotations > 2:
+    #     fitness -= 5000.0 * (full_rotations - 2)
     
-    # Debug: log rotation
-    # print(f"Genome {genome.key}: rotations={full_rotations:.1f}, fitness={fitness:.1f}")
+    # Big bonus for longest continuous time upright
+    fitness += max_time_upright * 10.0  # 10x multiplier for sustained balance
+    
+    # Debug: log rotation and max velocity
+    # max_vel_deg = math.degrees(max_angular_velocity)
+    # print(f"Genome {genome.key}: rotations={full_rotations:.1f}, max_vel={max_vel_deg:.0f}°/s, fitness={fitness:.1f}")
     
     return fitness
 
@@ -341,12 +320,7 @@ class WebSocketReporter(neat.reporting.BaseReporter):
                 "saved_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
             }
         
-        # Keep last 100 fitness values for graph
-        training_stats["fitness_history"].append(training_stats["best_fitness"])
-        if len(training_stats["fitness_history"]) > 100:
-            training_stats["fitness_history"] = training_stats["fitness_history"][-100:]
-        
-        # Send to WebSocket
+        # Write status to file
         send_training_update()
 
 
@@ -365,6 +339,9 @@ def run_training(continue_from_checkpoint=False):
         CONFIG_PATH
     )
     
+    # Note: Seeding population with best genome disabled due to NEAT species tracking issues
+    # The best genome is still preserved and will be compared against new genomes
+    
     # Create population
     if continue_from_checkpoint and os.path.exists(CHECKPOINT_DIR):
         # Find latest checkpoint
@@ -379,11 +356,6 @@ def run_training(continue_from_checkpoint=False):
             pop = neat.Population(config)
     else:
         pop = neat.Population(config)
-    
-    # Try to connect to WebSocket for live updates
-    ws_thread = threading.Thread(target=start_ws_thread, daemon=True)
-    ws_thread.start()
-    time.sleep(0.5)  # Give time to connect
     
     # Add reporters
     pop.add_reporter(neat.StdOutReporter(True))
