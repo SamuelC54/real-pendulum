@@ -129,7 +129,7 @@ def evaluate_genome(genome, config):
         # Prepare inputs for neural network
         inputs = [
             normalize_angle(angle_deg),                          # Angle from upright (-1 to 1)
-            state['pendulum_velocity'] / 10.0,                    # Angular velocity (normalized)
+            state['pendulum_velocity'] / 1000.0,                    # Angular velocity (normalized)
             state['cart_position'] / (rail_length / 2),          # Position (normalized)
             state['cart_velocity'] / MAX_SPEED,                   # Cart velocity (normalized)
         ]
@@ -358,10 +358,10 @@ def test_best_genome():
             state = sim.get_state()
             angle_deg = math.degrees(state['pendulum_angle']) % 360
             
-            # Prepare inputs for neural network
+            # Prepare inputs for neural network (4 inputs)
             inputs = [
                 normalize_angle(angle_deg),
-                state['pendulum_velocity'] / 10.0,
+                state['pendulum_velocity'] / 1000.0,
                 state['cart_position'] / (rail_length / 2),
                 state['cart_velocity'] / MAX_SPEED,
             ]

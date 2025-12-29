@@ -54,12 +54,14 @@ class PendulumSimulator:
         # Cart state (in steps)
         self.cart_position: float = 0.0          # Current position (steps)
         self.cart_velocity: float = 0.0          # Current velocity (steps/s)
+        self.cart_acceleration: float = 0.0      # Current acceleration (steps/s²)
         self.target_velocity: float = 0.0        # Commanded velocity (steps/s)
         
         # Pendulum state (0° = DOWN/stable, 180° = UP/inverted)
         # Start at 90° (horizontal) so it falls to 0° (down)
         self.pendulum_angle: float = math.pi / 2  # Radians (90° = horizontal)
         self.pendulum_velocity: float = 0.0       # rad/s
+        self.pendulum_acceleration: float = 0.0   # rad/s²
         
         # Limit switch positions (in steps from center)
         self.limit_left_pos: float = -self.config.rail_length_steps / 2
@@ -125,6 +127,7 @@ class PendulumSimulator:
         # Calculate ACTUAL cart acceleration (for pendulum coupling)
         # This is the real acceleration that was applied, not the desired one
         cart_accel = (self.cart_velocity - old_cart_velocity) / dt if dt > 0 else 0
+        self.cart_acceleration = cart_accel  # Store for get_state()
         
         # Update cart position
         old_position = self.cart_position
@@ -174,6 +177,7 @@ class PendulumSimulator:
         
         # Angular acceleration
         angular_accel = gravity_term + coupling_term - damping_term
+        self.pendulum_acceleration = angular_accel  # Store for get_state()
         
         # Update pendulum state (semi-implicit Euler)
         self.pendulum_velocity += angular_accel * dt
@@ -319,8 +323,10 @@ class PendulumSimulator:
                     return {
                         'cart_position': self.cart_position,
                         'cart_velocity': self.cart_velocity,
+                        'cart_acceleration': self.cart_acceleration,
                         'pendulum_angle': self.pendulum_angle,
                         'pendulum_velocity': self.pendulum_velocity,
+                        'pendulum_acceleration': self.pendulum_acceleration,
                         'limit_left': self.cart_position <= self.limit_left_pos,
                         'limit_right': self.cart_position >= self.limit_right_pos,
                         'limit_left_pos': self.limit_left_pos,
@@ -331,13 +337,15 @@ class PendulumSimulator:
                 return {
                     'cart_position': self.cart_position,
                     'cart_velocity': self.cart_velocity,
+                    'cart_acceleration': self.cart_acceleration,
                     'pendulum_angle': self.pendulum_angle,
                     'pendulum_velocity': self.pendulum_velocity,
+                    'pendulum_acceleration': self.pendulum_acceleration,
                     'limit_left': self.cart_position <= self.limit_left_pos,
                     'limit_right': self.cart_position >= self.limit_right_pos,
                     'limit_left_pos': self.limit_left_pos,
                     'limit_right_pos': self.limit_right_pos,
-                }
+                    }
         except Exception as e:
             # Emergency fallback - return current values without lock
             return {
