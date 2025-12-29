@@ -13,11 +13,16 @@
         <h2>🧬 NEAT Training</h2>
         
         <div class="control-row">
-          <button id="btn-start-training" class="control-btn neat-btn">
-            🚀 Start
+          <button id="btn-start-training" class="control-btn neat-btn" title="Swing-up training (starts from 0°)">
+            🚀 Swing-Up
           </button>
+          <button id="btn-start-balance" class="control-btn balance-btn" title="Balance training (starts from 180°)">
+            ⚖ Balance
+          </button>
+        </div>
+        <div class="control-row">
           <button id="btn-stop-training" class="control-btn stop-btn" style="display: none;">
-            ⏹ Stop
+            ⏹ Stop Training
           </button>
         </div>
         
@@ -160,8 +165,14 @@
             <button id="btn-oscillate" class="control-btn toggle-btn" data-mode="oscillate">
               ↕ Oscillate
             </button>
-            <button id="btn-neat-balance" class="control-btn toggle-btn neat-btn" data-mode="neat_balance">
+          </div>
+          
+          <div class="control-row">
+            <button id="btn-neat-swingup" class="control-btn toggle-btn neat-btn" data-mode="neat_balance">
               🧠 NEAT
+            </button>
+            <button id="btn-neat-balance-run" class="control-btn toggle-btn balance-btn" data-mode="neat_balance_only">
+              ⚖ Balance
             </button>
           </div>
           

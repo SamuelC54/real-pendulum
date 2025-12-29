@@ -92,6 +92,8 @@ last_angle_time = time.perf_counter()
 # ============ NEAT NETWORK ============
 best_genome_info = None  # Stores info about the best saved genome
 neat_config_values = None  # Stores current NEAT config values
+balance_network = None  # Separate network for balance-only mode
+balance_genome_info = None  # Info about balance genome
 
 def get_neat_config():
     """Read current NEAT config values from files"""
@@ -214,6 +216,66 @@ def load_neat_network():
     except Exception as e:
         print(f"NEAT: Failed to load network: {e}")
         best_genome_info = None
+        return False
+
+def load_balance_network():
+    """Load the trained balance-only NEAT network if available"""
+    global balance_network, balance_genome_info
+    
+    genome_path = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_balance_config.txt')
+    
+    if not os.path.exists(genome_path):
+        print("NEAT Balance: No trained network found (best_balance_genome.pkl)")
+        balance_genome_info = None
+        return False
+    
+    if not os.path.exists(config_path):
+        print("NEAT Balance: Config file not found (neat_balance_config.txt)")
+        balance_genome_info = None
+        return False
+    
+    try:
+        import neat
+        import pickle
+        
+        # Load NEAT config
+        neat_config = neat.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            config_path
+        )
+        
+        # Load best genome
+        with open(genome_path, 'rb') as f:
+            genome = pickle.load(f)
+        
+        # Create network
+        balance_network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
+        
+        # Extract genome info
+        num_nodes = len(genome.nodes)
+        num_connections = len([c for c in genome.connections.values() if c.enabled])
+        
+        import datetime
+        mod_time = os.path.getmtime(genome_path)
+        mod_datetime = datetime.datetime.fromtimestamp(mod_time)
+        
+        balance_genome_info = {
+            "fitness": genome.fitness,
+            "nodes": num_nodes,
+            "connections": num_connections,
+            "saved_at": mod_datetime.strftime("%Y-%m-%d %H:%M")
+        }
+        
+        print(f"NEAT Balance: Loaded network (fitness: {genome.fitness:.1f})")
+        return True
+        
+    except Exception as e:
+        print(f"NEAT Balance: Failed to load network: {e}")
+        balance_genome_info = None
         return False
 
 def normalize_angle_for_neat(angle_deg):
@@ -365,6 +427,9 @@ def compute_velocity() -> int:
     elif state.mode == "neat_balance":
         return compute_neat_balance()
     
+    elif state.mode == "neat_balance_only":
+        return compute_neat_balance_only()
+    
     elif state.mode == "homing":
         return compute_homing()
     
@@ -419,6 +484,45 @@ def compute_neat_balance() -> int:
     
     # Clamp to max speed
     velocity = max(-config.neat_max_speed, min(config.neat_max_speed, velocity))
+    
+    # Respect limits
+    if state.limit_left and velocity < 0:
+        velocity = 0
+    if state.limit_right and velocity > 0:
+        velocity = 0
+    
+    return velocity
+
+def compute_neat_balance_only() -> int:
+    """
+    Use the balance-only NEAT network (trained from upright position).
+    Uses lower speed since it's only for fine balance adjustments.
+    """
+    if balance_network is None:
+        print("Balance network not loaded! Going to idle.")
+        state.mode = "idle"
+        return 0
+    
+    # Get rail limits for normalization
+    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
+    
+    # Balance network uses lower max speed (5000)
+    balance_max_speed = 5000
+    
+    # Prepare inputs for neural network (4 inputs)
+    inputs = [
+        normalize_angle_for_neat(state.angle),           # Angle from upright
+        state.angular_velocity / 10.0,                   # Angular velocity (normalized, same as trainer)
+        state.position / rail_half,                      # Position (normalized)
+        state.velocity / balance_max_speed,              # Cart velocity (normalized)
+    ]
+    
+    # Get network output
+    output = balance_network.activate(inputs)
+    velocity = int(output[0] * balance_max_speed)
+    
+    # Clamp to max speed
+    velocity = max(-balance_max_speed, min(balance_max_speed, velocity))
     
     # Respect limits
     if state.limit_left and velocity < 0:
@@ -519,14 +623,42 @@ async def start_training():
     if os.path.exists(TRAINING_STATUS_FILE):
         os.remove(TRAINING_STATUS_FILE)
     
-    # Start training process
+    # Start training process (swing-up trainer)
     trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
     training_process = subprocess.Popen(
         [sys.executable, trainer_path],
         cwd=os.path.dirname(__file__)
     )
     
-    await broadcast_message({"type": "TRAINING_STARTED"})
+    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "swingup"})
+
+async def start_balance_training():
+    """Start NEAT balance training in background process"""
+    global training_process
+    
+    if training_process and training_process.poll() is None:
+        print("Training already running!")
+        return
+    
+    print("Starting NEAT BALANCE training...", flush=True)
+    
+    # Clear old checkpoints and status file
+    import shutil
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_balance_checkpoints')
+    
+    if os.path.exists(checkpoint_dir):
+        shutil.rmtree(checkpoint_dir)
+    if os.path.exists(TRAINING_STATUS_FILE):
+        os.remove(TRAINING_STATUS_FILE)
+    
+    # Start balance training process
+    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_balance_trainer.py')
+    training_process = subprocess.Popen(
+        [sys.executable, trainer_path],
+        cwd=os.path.dirname(__file__)
+    )
+    
+    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "balance"})
 
 async def stop_training():
     """Stop NEAT training"""
@@ -693,7 +825,12 @@ async def handle_command(message: str):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_balance"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_balance", "neat_balance_only"]:
+                # Reset pendulum to upright in simulator when entering balance-only mode
+                if new_mode == "neat_balance_only" and SIMULATOR_MODE and serial_port:
+                    serial_port.set_pendulum_upright()
+                    print("Simulator: Reset pendulum to upright (180°)")
+                
                 state.mode = new_mode
                 print(f"Mode changed to: {new_mode}")
                 if new_mode == "idle":
@@ -737,8 +874,12 @@ async def handle_command(message: str):
             asyncio.create_task(do_upload_async())
         
         elif cmd_type == "START_TRAINING":
-            # Start NEAT training in background
+            # Start NEAT swing-up training in background
             await start_training()
+        
+        elif cmd_type == "START_BALANCE_TRAINING":
+            # Start NEAT balance training in background
+            await start_balance_training()
         
         elif cmd_type == "STOP_TRAINING":
             # Stop NEAT training
@@ -890,8 +1031,9 @@ async def main():
         print(">>> SIMULATOR MODE - No hardware required <<<")
     print("=" * 50, flush=True)
     
-    # Load NEAT network and config
+    # Load NEAT networks and config
     load_neat_network()
+    load_balance_network()
     get_neat_config()
     
     # Connect to Arduino or simulator

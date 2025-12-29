@@ -282,6 +282,12 @@ function sendStartTraining() {
   }
 }
 
+function sendStartBalanceTraining() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'START_BALANCE_TRAINING' }));
+  }
+}
+
 function sendStopTraining() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'STOP_TRAINING' }));
@@ -358,8 +364,10 @@ function updateTrainingDisplay(data: any) {
   // Show training is active
   trainingActive = true;
   const startBtn = document.getElementById('btn-start-training');
+  const balanceBtn = document.getElementById('btn-start-balance');
   const stopBtn = document.getElementById('btn-stop-training');
   if (startBtn) startBtn.style.display = 'none';
+  if (balanceBtn) balanceBtn.style.display = 'none';
   if (stopBtn) stopBtn.style.display = 'block';
   
   // Update stats
@@ -438,6 +446,7 @@ if (uploadBtn) {
 
 // Training buttons
 const startTrainingBtn = document.getElementById('btn-start-training');
+const startBalanceBtn = document.getElementById('btn-start-balance');
 const stopTrainingBtn = document.getElementById('btn-stop-training');
 
 if (startTrainingBtn) {
@@ -445,6 +454,18 @@ if (startTrainingBtn) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       sendStartTraining();
       startTrainingBtn.style.display = 'none';
+      if (startBalanceBtn) startBalanceBtn.style.display = 'none';
+      if (stopTrainingBtn) stopTrainingBtn.style.display = 'block';
+    }
+  });
+}
+
+if (startBalanceBtn) {
+  startBalanceBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendStartBalanceTraining();
+      if (startTrainingBtn) startTrainingBtn.style.display = 'none';
+      startBalanceBtn.style.display = 'none';
       if (stopTrainingBtn) stopTrainingBtn.style.display = 'block';
     }
   });
@@ -604,11 +625,13 @@ function connect() {
         }
         
         if (data.type === 'TRAINING_STARTED') {
-          console.log('Training started');
+          console.log('Training started:', data.trainer || 'unknown');
           trainingActive = true;
           const startBtn = document.getElementById('btn-start-training');
+          const balanceBtn = document.getElementById('btn-start-balance');
           const stopBtn = document.getElementById('btn-stop-training');
           if (startBtn) startBtn.style.display = 'none';
+          if (balanceBtn) balanceBtn.style.display = 'none';
           if (stopBtn) stopBtn.style.display = 'block';
         }
         
@@ -616,8 +639,10 @@ function connect() {
           console.log('Training stopped');
           trainingActive = false;
           const startBtn = document.getElementById('btn-start-training');
+          const balanceBtn = document.getElementById('btn-start-balance');
           const stopBtn = document.getElementById('btn-stop-training');
           if (startBtn) startBtn.style.display = 'block';
+          if (balanceBtn) balanceBtn.style.display = 'block';
           if (stopBtn) stopBtn.style.display = 'none';
         }
         

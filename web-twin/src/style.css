@@ -573,6 +573,16 @@ h2 {
   box-shadow: 0 0 15px rgba(200, 100, 255, 0.5);
 }
 
+.control-btn.balance-btn {
+  background: rgba(100, 200, 255, 0.15);
+  border-color: rgba(100, 200, 255, 0.4);
+  color: #64c8ff;
+}
+
+.control-btn.balance-btn:hover {
+  background: rgba(100, 200, 255, 0.25);
+}
+
 /* Toggle buttons - stay highlighted when mode is active */
 .control-btn.toggle-btn {
   background: rgba(255, 255, 255, 0.06);

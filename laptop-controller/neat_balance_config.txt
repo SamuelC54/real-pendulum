@@ -1,0 +1,82 @@
+[NEAT]
+fitness_criterion      = max
+fitness_threshold     = 4500
+no_fitness_termination = True
+pop_size              = 100
+reset_on_extinction    = False
+
+[DefaultGenome]
+# Node activation options
+activation_default      = tanh
+activation_mutate_rate  = 0.0
+activation_options      = tanh
+
+# Node aggregation options
+aggregation_default     = sum
+aggregation_mutate_rate = 0.0
+aggregation_options     = sum
+
+# Node bias options
+bias_init_mean          = 0.0
+bias_init_stdev         = 0.5
+bias_max_value          = 10.0
+bias_min_value          = -10.0
+bias_mutate_power       = 0.3
+bias_mutate_rate        = 0.3
+bias_replace_rate       = 0.05
+
+# Genome compatibility options
+compatibility_disjoint_coefficient = 1.0
+compatibility_weight_coefficient   = 0.5
+
+# Connection add/remove rates
+conn_add_prob           = 0.3
+conn_delete_prob        = 0.05
+
+# Connection enable options
+enabled_default         = True
+enabled_mutate_rate     = 0.01
+
+# Network settings
+feed_forward            = True
+initial_connection      = full_direct
+
+# Node add/remove rates
+node_add_prob           = 0.1
+node_delete_prob        = 0.02
+
+# Network parameters
+num_hidden              = 0
+num_inputs              = 4
+num_outputs             = 1
+
+# Node response options (required by neat-python)
+response_init_mean      = 1.0
+response_init_stdev     = 0.0
+response_max_value      = 10.0
+response_min_value      = -10.0
+response_mutate_power   = 0.0
+response_mutate_rate    = 0.0
+response_replace_rate   = 0.0
+
+# Connection weight options
+weight_init_mean        = 0.0
+weight_init_stdev       = 1.0
+weight_max_value        = 10.0
+weight_min_value        = -10.0
+weight_mutate_power     = 0.4
+weight_mutate_rate      = 0.6
+weight_replace_rate     = 0.05
+
+[DefaultSpeciesSet]
+compatibility_threshold = 1.4
+
+[DefaultStagnation]
+species_fitness_func = mean
+max_stagnation       = 20   
+species_elitism      = 2
+
+[DefaultReproduction]
+elitism            = 3
+survival_threshold = 0.25
+

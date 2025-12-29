@@ -288,6 +288,15 @@ class PendulumSimulator:
             self._read_buffer.seek(current_pos)
             return end_pos - current_pos
     
+    def set_pendulum_upright(self):
+        """Reset pendulum to upright position (180°) with small perturbation"""
+        with self._lock:
+            import random
+            perturbation = random.uniform(-5, 5)  # ±5 degrees
+            self.pendulum_angle = math.radians(180 + perturbation)
+            self.pendulum_velocity = random.uniform(-0.3, 0.3)  # Small initial velocity
+            print(f"Simulator: Pendulum set to {180 + perturbation:.1f}°")
+    
     def close(self):
         """Stop the simulator"""
         self._running = False
