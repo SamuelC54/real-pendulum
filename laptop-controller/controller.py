@@ -57,7 +57,7 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, swing_up, balance, homing
+    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, neat_balance, homing
     connected: bool = False
     # Homing state
     homing_phase: int = 0          # 0=not homing, 1=going right, 2=going left, 3=going to center
@@ -74,15 +74,6 @@ class ControlConfig:
     # Oscillate mode
     oscillate_speed: int = 3000
     oscillate_period: float = 2.0  # seconds per cycle
-    
-    # Swing-up mode
-    swingup_kp: float = 8000.0     # Proportional gain for energy pumping
-    swingup_max_speed: int = 10000
-    
-    # Balance mode (PD control)
-    balance_kp: float = 500.0
-    balance_kd: float = 50.0
-    balance_threshold: float = 30.0  # degrees from vertical to switch to balance
     
     # NEAT balance mode
     neat_max_speed: int = 100000  # Max speed for NEAT controller
@@ -286,12 +277,6 @@ def compute_velocity() -> int:
     elif state.mode == "oscillate":
         return compute_oscillate()
     
-    elif state.mode == "swing_up":
-        return compute_swing_up()
-    
-    elif state.mode == "balance":
-        return compute_balance()
-    
     elif state.mode == "neat_balance":
         return compute_neat_balance()
     
@@ -314,81 +299,6 @@ def compute_oscillate() -> int:
     
     return velocity
 
-def compute_swing_up() -> int:
-    """
-    Energy-based swing-up control.
-    Move in the direction that adds energy when pendulum is moving.
-    
-    Key insight: To add energy, move cart in same direction as pendulum tip.
-    When pendulum swings right (positive angular velocity at bottom), 
-    moving cart right adds energy.
-    
-    cos(angle) gives the horizontal component:
-    - At bottom (180°): cos(180°) = -1
-    - At top (0°/360°): cos(0°) = 1
-    
-    Formula: velocity = Kp * cos(angle) * angular_velocity
-    """
-    # Convert to radians, with 0 = up
-    angle_from_up = math.radians(state.angle)
-    
-    # Energy pumping: move with the pendulum when it's near bottom
-    # cos(angle) is negative at bottom, positive at top
-    pump_direction = math.cos(angle_from_up) * state.angular_velocity
-    
-    velocity = int(config.swingup_kp * pump_direction)
-    
-    # Clamp to max speed
-    velocity = max(-config.swingup_max_speed, min(config.swingup_max_speed, velocity))
-    
-    # Respect limits
-    if state.limit_left and velocity < 0:
-        velocity = 0
-    if state.limit_right and velocity > 0:
-        velocity = 0
-    
-    # Check if we should switch to balance mode
-    angle_from_vertical = min(state.angle, 360 - state.angle)
-    if angle_from_vertical < config.balance_threshold:
-        state.mode = "balance"
-        print("Switching to BALANCE mode!")
-    
-    return velocity
-
-def compute_balance() -> int:
-    """
-    PD controller to balance pendulum at top.
-    
-    Target: angle = 0 (or 360)
-    Error: how far from vertical
-    """
-    # Calculate error from vertical (0 degrees)
-    # Normalize to [-180, 180] range
-    error = state.angle
-    if error > 180:
-        error = error - 360
-    
-    # PD control
-    velocity = int(config.balance_kp * error + config.balance_kd * state.angular_velocity)
-    
-    # Clamp
-    max_balance_speed = 20000
-    velocity = max(-max_balance_speed, min(max_balance_speed, velocity))
-    
-    # Respect limits
-    if state.limit_left and velocity < 0:
-        velocity = 0
-    if state.limit_right and velocity > 0:
-        velocity = 0
-    
-    # If we've fallen too far, go back to swing-up
-    angle_from_vertical = min(state.angle, 360 - state.angle)
-    if angle_from_vertical > 45:  # Fallen past 45 degrees
-        state.mode = "swing_up"
-        print("Fell! Back to SWING_UP mode")
-    
-    return velocity
-
 def compute_neat_balance() -> int:
     """
     Use trained NEAT neural network to balance the pendulum.
@@ -403,9 +313,9 @@ def compute_neat_balance() -> int:
       - Cart velocity (-1 to 1, scaled by neat_max_speed)
     """
     if neat_network is None:
-        print("NEAT network not loaded! Falling back to PD balance.")
-        state.mode = "balance"
-        return compute_balance()
+        print("NEAT network not loaded! Going to idle.")
+        state.mode = "idle"
+        return 0
     
     # Get rail limits for normalization
     rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
@@ -641,7 +551,7 @@ async def handle_command(message: str):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "swing_up", "balance", "neat_balance"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_balance"]:
                 state.mode = new_mode
                 print(f"Mode changed to: {new_mode}")
                 if new_mode == "idle":
