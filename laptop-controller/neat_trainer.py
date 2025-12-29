@@ -23,6 +23,7 @@ import os
 import sys
 import math
 import pickle
+import random
 import neat
 import time
 import json
@@ -91,8 +92,8 @@ def start_ws_thread():
         pass
 
 # Training parameters
-MAX_SPEED = 10001          # Max cart velocity for training
-SIMULATION_STEPS = 1200    # Steps per evaluation (at 50Hz = 40 seconds)
+MAX_SPEED = 9001          # Max cart velocity for training
+SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
 # Paths
@@ -155,6 +156,8 @@ def evaluate_genome(genome, config, visualize=False):
     
     # Start pendulum at BOTTOM (0°) - must swing up!
     pendulum_angle = math.radians(hash(str(genome.key)) % 10 - 5)  # Near 0° (down)
+    ### Start pendulum at random angle (0-360°)
+    ##pendulum_angle = math.radians(random.uniform(0, 360))
     pendulum_velocity = 0.0
     
     # Limits
@@ -244,12 +247,12 @@ def evaluate_genome(genome, config, visualize=False):
         angle_from_up = abs(normalize_angle(angle_deg))  # 0 = at 180°, 1 = at 0°
         
         # Check if reached near 180° (within ±3°, which is ~0.017 normalized)
-        if angle_from_up < 0.017:  # Within ~3° of 180°
+        if angle_from_up < 0.5:  # Within 90° of 180° (the top of the pendulum)
             reached_top = True
         
         # If reached top and fell back down (past 90° from top), reset score
         if reached_top and angle_from_up > 0.5:  # Fell past 90° from upright
-            fitness = 0.0
+            fitness = 0
             reached_top = False  # Reset to allow another attempt
         
         # Exponential reward: more points when closer to 180°
