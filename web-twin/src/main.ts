@@ -333,6 +333,33 @@ function updateBestGenomeDisplay(genome: any) {
   }
 }
 
+let neatConfigLoaded = false;
+
+function updateNeatConfigDisplay(config: any) {
+  if (!config || neatConfigLoaded) return;
+  
+  const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
+  const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
+  const fitnessThresholdEl = document.getElementById('neat-fitness-threshold') as HTMLInputElement;
+  const simStepsEl = document.getElementById('neat-sim-steps') as HTMLInputElement;
+  
+  if (popSizeEl && config.pop_size !== undefined) {
+    popSizeEl.value = config.pop_size.toString();
+  }
+  if (maxSpeedEl && config.max_speed !== undefined) {
+    maxSpeedEl.value = config.max_speed.toString();
+  }
+  if (fitnessThresholdEl && config.fitness_threshold !== undefined) {
+    fitnessThresholdEl.value = config.fitness_threshold.toString();
+  }
+  if (simStepsEl && config.sim_steps !== undefined) {
+    simStepsEl.value = config.sim_steps.toString();
+  }
+  
+  // Only load once to avoid overwriting user changes
+  neatConfigLoaded = true;
+}
+
 function updateTrainingDisplay(data: any) {
   // Show training is active
   trainingActive = true;
@@ -542,6 +569,9 @@ function connect() {
           
           // Update best genome info
           updateBestGenomeDisplay(data.best_genome);
+          
+          // Update NEAT config inputs (once on first connection)
+          updateNeatConfigDisplay(data.neat_config);
         }
         
         // Handle upload status messages
@@ -594,6 +624,7 @@ function connect() {
       container.classList.remove('connected');
       container.classList.add('disconnected');
       if (loadingSpinnerEl) loadingSpinnerEl.classList.remove('hidden');
+      neatConfigLoaded = false;  // Reset so config reloads on reconnect
       scheduleReconnect();
     };
     

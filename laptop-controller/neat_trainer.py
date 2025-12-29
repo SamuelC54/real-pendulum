@@ -91,7 +91,7 @@ def start_ws_thread():
         pass
 
 # Training parameters
-MAX_SPEED = 100000          # Max cart velocity for training
+MAX_SPEED = 10000          # Max cart velocity for training
 SIMULATION_STEPS = 2000    # Steps per evaluation (at 50Hz = 40 seconds)
 EVAL_DT = 0.02             # Evaluation timestep (50Hz)
 
@@ -365,7 +365,7 @@ def run_training(continue_from_checkpoint=False):
     print("Press Ctrl+C to stop and save best genome\n")
     
     try:
-        winner = pop.run(eval_genomes, n=300)  # Run for up to 300 generations
+        winner = pop.run(eval_genomes, n=999999)  # Run until manually stopped (very high limit)
     except KeyboardInterrupt:
         print("\n\nTraining interrupted!")
         winner = stats.best_genome()

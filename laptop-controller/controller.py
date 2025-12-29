@@ -91,6 +91,63 @@ last_angle_time = time.perf_counter()
 
 # ============ NEAT NETWORK ============
 best_genome_info = None  # Stores info about the best saved genome
+neat_config_values = None  # Stores current NEAT config values
+
+def get_neat_config():
+    """Read current NEAT config values from files"""
+    global neat_config_values
+    
+    config_path = os.path.join(os.path.dirname(__file__), 'neat_config.txt')
+    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_trainer.py')
+    
+    pop_size = 1000
+    fitness_threshold = 2000
+    max_speed = 100000
+    sim_steps = 2000
+    
+    # Read pop_size and fitness_threshold from neat_config.txt
+    try:
+        with open(config_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('pop_size'):
+                    parts = line.split('=')
+                    if len(parts) == 2:
+                        pop_size = int(parts[1].strip())
+                elif line.startswith('fitness_threshold'):
+                    parts = line.split('=')
+                    if len(parts) == 2:
+                        fitness_threshold = float(parts[1].strip())
+    except Exception as e:
+        print(f"Error reading neat_config.txt: {e}")
+    
+    # Read MAX_SPEED and SIMULATION_STEPS from neat_trainer.py
+    try:
+        with open(trainer_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('MAX_SPEED'):
+                    parts = line.split('=')
+                    if len(parts) == 2:
+                        # Remove comments
+                        value = parts[1].split('#')[0].strip()
+                        max_speed = int(value)
+                elif line.startswith('SIMULATION_STEPS'):
+                    parts = line.split('=')
+                    if len(parts) == 2:
+                        value = parts[1].split('#')[0].strip()
+                        sim_steps = int(value)
+    except Exception as e:
+        print(f"Error reading neat_trainer.py: {e}")
+    
+    neat_config_values = {
+        "pop_size": pop_size,
+        "max_speed": max_speed,
+        "fitness_threshold": fitness_threshold,
+        "sim_steps": sim_steps
+    }
+    
+    return neat_config_values
 
 def load_neat_network():
     """Load the trained NEAT network if available"""
@@ -557,6 +614,9 @@ async def update_neat_config(cmd: dict):
         # Update controller's neat_max_speed
         config.neat_max_speed = max_speed
         
+        # Update the cached config values
+        get_neat_config()
+        
         print(f"NEAT config updated: pop={pop_size}, max_speed={max_speed}, threshold={fitness_threshold}, steps={sim_steps}", flush=True)
         await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "NEAT config updated!"})
         
@@ -734,7 +794,8 @@ async def broadcast_state():
         "limit_right_pos": state.limit_right_pos,
         "mode": state.mode,
         "connected": state.connected,
-        "best_genome": best_genome_info
+        "best_genome": best_genome_info,
+        "neat_config": neat_config_values
     })
     
     # Send to each client, removing dead connections
@@ -813,8 +874,9 @@ async def main():
         print(">>> SIMULATOR MODE - No hardware required <<<")
     print("=" * 50, flush=True)
     
-    # Load NEAT network if available
+    # Load NEAT network and config
     load_neat_network()
+    get_neat_config()
     
     # Connect to Arduino or simulator
     if not connect_serial():
