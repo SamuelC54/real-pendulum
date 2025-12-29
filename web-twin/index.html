@@ -166,6 +166,13 @@
         <div id="controls">
           <h2>Controls</h2>
           
+          <div class="control-row" style="margin-bottom: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-dim);">
+              <input type="checkbox" id="accel-mode-toggle" style="width: 16px; height: 16px;">
+              <span>Acceleration Mode</span>
+            </label>
+          </div>
+          
           <div class="control-row">
             <button id="btn-left" class="control-btn hold-btn" data-mode-start="manual_left" data-mode-stop="idle">
               ← Left
@@ -222,6 +229,11 @@
               <label>Speed</label>
               <input type="range" id="cfg-manual-speed" min="0" max="10000" value="1000" data-cfg="manual_speed">
               <span class="slider-value" id="val-manual-speed">1000</span>
+            </div>
+            <div class="slider-row">
+              <label>Acceleration</label>
+              <input type="range" id="cfg-manual-accel" min="1000" max="500000" step="1000" value="50000" data-cfg="manual_accel">
+              <span class="slider-value" id="val-manual-accel">50000</span>
             </div>
           </div>
           

@@ -32,6 +32,12 @@ from concurrent.futures import ThreadPoolExecutor
 # Check for simulator mode
 SIMULATOR_MODE = "--sim" in sys.argv or "-s" in sys.argv
 
+# Import simulator (always available, even if not used)
+try:
+    from simulator import PendulumSimulator
+except ImportError:
+    PendulumSimulator = None
+
 # NEAT neural network for balance mode
 neat_network = None  # Loaded on startup if available
 
@@ -57,7 +63,8 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, oscillate, neat_swing_up_only, neat_balance_only, homing
+    mode: str = "idle"             # idle, manual_left, manual_right, manual_left_accel, manual_right_accel, oscillate, neat_swing_up_only, neat_balance_only, homing
+    manual_accel_mode: bool = False  # Whether manual mode uses acceleration instead of velocity
     connected: bool = False
     # Homing state
     homing_phase: int = 0          # 0=not homing, 1=going right, 2=going left, 3=going to center
@@ -288,7 +295,8 @@ def connect_serial():
     
     if SIMULATOR_MODE:
         # Use physics simulator instead of real serial
-        from simulator import PendulumSimulator
+        if PendulumSimulator is None:
+            raise ImportError("Simulator module not found. Cannot use --sim mode.")
         serial_port = PendulumSimulator()
         state.connected = True
         print("Connected to SIMULATOR")
@@ -307,8 +315,11 @@ def connect_serial():
 last_debug_velocity = [0]  # Use list to allow modification in nested function
 
 def send_velocity(velocity: int):
-    """Send velocity command to Arduino"""
-    if serial_port and serial_port.is_open:
+    """Send velocity command to Arduino or simulator"""
+    if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
+        # Simulator supports velocity directly
+        serial_port.set_target_velocity(float(velocity))
+    elif serial_port and serial_port.is_open:
         try:
             cmd = f"V{velocity}\n"
             serial_port.write(cmd.encode())
@@ -320,6 +331,28 @@ def send_velocity(velocity: int):
             pass  # Ignore write timeouts, next command will resync
         except Exception as e:
             print(f"Send error: {e}", flush=True)
+
+def send_acceleration(acceleration: int):
+    """Send acceleration command (for simulator) or convert to velocity (for Arduino)"""
+    # Check limits and stop acceleration if at limit
+    if state.limit_left and acceleration < 0:
+        acceleration = 0
+    if state.limit_right and acceleration > 0:
+        acceleration = 0
+    
+    if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
+        # Simulator supports acceleration directly
+        serial_port.set_target_acceleration(float(acceleration))
+    elif serial_port and serial_port.is_open:
+        # For real hardware, convert acceleration to velocity change
+        # Simple integration: v = v_prev + a * dt
+        CONTROL_DT = 0.02  # Control loop period (50Hz)
+        velocity_change = acceleration * CONTROL_DT
+        target_velocity = state.velocity + velocity_change
+        # Clamp to max speed
+        max_speed = config.manual_speed * 10  # Allow higher speeds for acceleration mode
+        target_velocity = max(-max_speed, min(max_speed, target_velocity))
+        send_velocity(int(target_velocity))
 
 def send_stop():
     """Send stop command"""
@@ -407,12 +440,28 @@ def compute_velocity() -> int:
     elif state.mode == "manual_left":
         if state.limit_left:  # Left limit blocks moving left
             return 0
+        if state.manual_accel_mode:
+            # Return acceleration (negative = left)
+            return -config.manual_accel
         return -config.manual_speed  # Negative = left
     
     elif state.mode == "manual_right":
         if state.limit_right:  # Right limit blocks moving right
             return 0
+        if state.manual_accel_mode:
+            # Return acceleration (positive = right)
+            return config.manual_accel
         return config.manual_speed  # Positive = right
+    
+    elif state.mode == "manual_left_accel":
+        if state.limit_left:  # Left limit blocks moving left
+            return 0
+        return -config.manual_accel  # Negative = left (acceleration)
+    
+    elif state.mode == "manual_right_accel":
+        if state.limit_right:  # Right limit blocks moving right
+            return 0
+        return config.manual_accel  # Positive = right (acceleration)
     
     elif state.mode == "oscillate":
         return compute_oscillate()
@@ -489,7 +538,7 @@ def compute_neat_swing_up_only() -> int:
 def compute_neat_balance_only() -> int:
     """
     Use the balance-only NEAT network (trained from upright position).
-    Uses lower speed since it's only for fine balance adjustments.
+    Network outputs acceleration, which we convert to velocity for hardware.
     """
     if balance_network is None:
         print("Balance network not loaded! Going to idle.")
@@ -499,31 +548,45 @@ def compute_neat_balance_only() -> int:
     # Get rail limits for normalization
     rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
     
-    # Balance network uses lower max speed (5000)
-    balance_max_speed = 5000
-    
-    # Prepare inputs for neural network (4 inputs)
+    # Prepare inputs for neural network (4 inputs) - match trainer normalization
     inputs = [
         normalize_angle_for_neat(state.angle),           # Angle from upright
-        state.angular_velocity / 10.0,                   # Angular velocity (normalized, same as trainer)
+        state.angular_velocity / 1000.0,                 # Angular velocity (normalized, match trainer)
         state.position / rail_half,                      # Position (normalized)
-        state.velocity / balance_max_speed,              # Cart velocity (normalized)
+        state.velocity / config.neat_max_speed,          # Cart velocity (normalized)
     ]
     
-    # Get network output
+    # Get network output (acceleration command: -1 to 1)
     output = balance_network.activate(inputs)
-    velocity = int(output[0] * balance_max_speed)
     
-    # Clamp to max speed
-    velocity = max(-balance_max_speed, min(balance_max_speed, velocity))
+    # Scale to acceleration (steps/s²)
+    max_accel = config.manual_accel  # Use manual_accel as max acceleration
+    acceleration = output[0] * max_accel
+    acceleration = max(-max_accel, min(max_accel, acceleration))
     
     # Respect limits
-    if state.limit_left and velocity < 0:
-        velocity = 0
-    if state.limit_right and velocity > 0:
-        velocity = 0
+    if state.limit_left and acceleration < 0:
+        acceleration = 0
+    if state.limit_right and acceleration > 0:
+        acceleration = 0
     
-    return velocity
+    # For simulator mode: use acceleration directly
+    if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
+        serial_port.set_target_acceleration(acceleration)
+        return 0  # Return 0 since we set acceleration directly
+    
+    # For real hardware: integrate acceleration to get velocity
+    # Simple integration: v = v_prev + a * dt
+    # We'll use a simple approach: convert acceleration to velocity change
+    # This is approximate but works for the control loop
+    CONTROL_DT = 0.02  # Control loop period (50Hz)
+    velocity_change = acceleration * CONTROL_DT
+    target_velocity = state.velocity + velocity_change
+    
+    # Clamp to max speed
+    target_velocity = max(-config.neat_max_speed, min(config.neat_max_speed, target_velocity))
+    
+    return int(target_velocity)
 
 def compute_homing() -> int:
     """
@@ -839,7 +902,7 @@ async def handle_command(message: str, websocket=None):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "oscillate", "neat_swing_up_only", "neat_balance_only"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only"]:
                 # Reset pendulum to upright in simulator when entering balance-only mode
                 if new_mode == "neat_balance_only" and SIMULATOR_MODE and serial_port:
                     serial_port.set_pendulum_upright()
@@ -849,6 +912,10 @@ async def handle_command(message: str, websocket=None):
                 print(f"Mode changed to: {new_mode}")
                 if new_mode == "idle":
                     send_stop()
+        
+        elif cmd_type == "SET_ACCEL_MODE":
+            state.manual_accel_mode = cmd.get("enabled", False)
+            print(f"Manual acceleration mode: {state.manual_accel_mode}", flush=True)
         
         elif cmd_type == "STOP":
             state.mode = "idle"
@@ -945,7 +1012,13 @@ async def broadcast_state():
         "connected": state.connected,
         "best_genome_swing_up": best_genome_info,
         "best_genome_balance": balance_genome_info,
-        "neat_config": neat_config_values
+        "neat_config": neat_config_values,
+        "config": {
+            "manual_speed": config.manual_speed,
+            "manual_accel": config.manual_accel,
+            "oscillate_speed": config.oscillate_speed,
+            "oscillate_period": config.oscillate_period
+        }
     })
     
     # Send to each client, removing dead connections
@@ -1010,12 +1083,26 @@ async def control_loop():
         await loop.run_in_executor(executor, read_serial)
         
         # Compute velocity
-        velocity = compute_velocity()
+        command_value = compute_velocity()  # Can be velocity or acceleration
         
-        # Debug: print when velocity changes significantly
-        if abs(velocity - last_printed_velocity) > 100:
-            print(f"Mode: {state.mode}, Velocity: {velocity}", flush=True)
-            last_printed_velocity = velocity
+        # Check if we're in acceleration mode for manual control
+        is_accel_mode = (state.mode in ["manual_left_accel", "manual_right_accel"] or 
+                        (state.mode in ["manual_left", "manual_right"] and state.manual_accel_mode))
+        
+        if is_accel_mode:
+            # Send acceleration command in thread pool (non-blocking)
+            await loop.run_in_executor(executor, send_acceleration, int(command_value))
+            # Debug: print when acceleration changes significantly
+            if abs(command_value - last_printed_velocity) > 1000:
+                print(f"Mode: {state.mode}, Acceleration: {command_value}", flush=True)
+                last_printed_velocity = command_value
+        else:
+            # Send velocity command in thread pool (non-blocking)
+            await loop.run_in_executor(executor, send_velocity, int(command_value))
+            # Debug: print when velocity changes significantly
+            if abs(command_value - last_printed_velocity) > 100:
+                print(f"Mode: {state.mode}, Velocity: {command_value}", flush=True)
+                last_printed_velocity = command_value
         
         # Update limit positions when switches are hit
         if state.limit_left:
@@ -1023,8 +1110,7 @@ async def control_loop():
         if state.limit_right:
             state.limit_right_pos = state.position
         
-        # Send velocity in thread pool (non-blocking)
-        await loop.run_in_executor(executor, send_velocity, velocity)
+        # Send command in thread pool (non-blocking) - already handled above
         
         # Broadcast state to web clients at lower rate
         now = time.perf_counter()

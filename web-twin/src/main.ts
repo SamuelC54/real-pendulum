@@ -221,6 +221,13 @@ function sendMode(mode: string) {
   }
 }
 
+function sendAccelMode(enabled: boolean) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'SET_ACCEL_MODE', enabled }));
+    console.log('Acceleration mode:', enabled);
+  }
+}
+
 function sendStop() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'STOP' }));
@@ -606,6 +613,42 @@ function connect() {
             velocityValueEl.textContent = angularVelocity.toFixed(1);
           }
           
+          // Update config sliders if config data is present
+          if (data.config) {
+            if (data.config.manual_speed !== undefined) {
+              const speedSlider = document.getElementById('cfg-manual-speed') as HTMLInputElement;
+              const speedValue = document.getElementById('val-manual-speed');
+              if (speedSlider) {
+                speedSlider.value = data.config.manual_speed.toString();
+                if (speedValue) speedValue.textContent = data.config.manual_speed.toString();
+              }
+            }
+            if (data.config.manual_accel !== undefined) {
+              const accelSlider = document.getElementById('cfg-manual-accel') as HTMLInputElement;
+              const accelValue = document.getElementById('val-manual-accel');
+              if (accelSlider) {
+                accelSlider.value = data.config.manual_accel.toString();
+                if (accelValue) accelValue.textContent = data.config.manual_accel.toString();
+              }
+            }
+            if (data.config.oscillate_speed !== undefined) {
+              const oscSpeedSlider = document.getElementById('cfg-osc-speed') as HTMLInputElement;
+              const oscSpeedValue = document.getElementById('val-osc-speed');
+              if (oscSpeedSlider) {
+                oscSpeedSlider.value = data.config.oscillate_speed.toString();
+                if (oscSpeedValue) oscSpeedValue.textContent = data.config.oscillate_speed.toString();
+              }
+            }
+            if (data.config.oscillate_period !== undefined) {
+              const oscPeriodSlider = document.getElementById('cfg-osc-period') as HTMLInputElement;
+              const oscPeriodValue = document.getElementById('val-osc-period');
+              if (oscPeriodSlider) {
+                oscPeriodSlider.value = data.config.oscillate_period.toString();
+                if (oscPeriodValue) oscPeriodValue.textContent = data.config.oscillate_period.toFixed(1);
+              }
+            }
+          }
+          
           if (data.position !== undefined) {
             currentPosition = data.position;
             limitLeft = data.limit_left || false;
@@ -757,15 +800,36 @@ function scheduleReconnect() {
 
 // Setup button controls
 function setupControls() {
+  // Get acceleration mode toggle
+  const accelToggle = document.getElementById('accel-mode-toggle') as HTMLInputElement;
+  let accelModeEnabled = false;
+  
+  // Handle acceleration mode toggle
+  if (accelToggle) {
+    accelToggle.addEventListener('change', (e) => {
+      accelModeEnabled = (e.target as HTMLInputElement).checked;
+      sendAccelMode(accelModeEnabled);
+    });
+  }
+  
   // Hold buttons (press to start mode, release to stop)
   document.querySelectorAll('.hold-btn').forEach(btn => {
     const startMode = btn.getAttribute('data-mode-start');
     const stopMode = btn.getAttribute('data-mode-stop');
     
+    // Helper to get the actual mode based on toggle state
+    const getActualMode = (baseMode: string | null) => {
+      if (!baseMode) return null;
+      if (accelModeEnabled && baseMode === 'manual_left') return 'manual_left_accel';
+      if (accelModeEnabled && baseMode === 'manual_right') return 'manual_right_accel';
+      return baseMode;
+    };
+    
     // Mouse events
     btn.addEventListener('mousedown', () => {
       btn.classList.add('active');
-      if (startMode) sendMode(startMode);
+      const mode = getActualMode(startMode);
+      if (mode) sendMode(mode);
     });
     
     btn.addEventListener('mouseup', () => {
@@ -784,7 +848,8 @@ function setupControls() {
     btn.addEventListener('touchstart', (e) => {
       e.preventDefault();
       btn.classList.add('active');
-      if (startMode) sendMode(startMode);
+      const mode = getActualMode(startMode);
+      if (mode) sendMode(mode);
     });
     
     btn.addEventListener('touchend', () => {

@@ -55,7 +55,9 @@ class PendulumSimulator:
         self.cart_position: float = 0.0          # Current position (steps)
         self.cart_velocity: float = 0.0          # Current velocity (steps/s)
         self.cart_acceleration: float = 0.0      # Current acceleration (steps/s²)
-        self.target_velocity: float = 0.0        # Commanded velocity (steps/s)
+        self.target_velocity: float = 0.0        # Commanded velocity (steps/s) - for backward compatibility
+        self.target_acceleration: float = 0.0    # Commanded acceleration (steps/s²)
+        self.use_acceleration_command: bool = False  # Whether to use acceleration or velocity command
         
         # Pendulum state (0° = DOWN/stable, 180° = UP/inverted)
         # Start at 90° (horizontal) so it falls to 0° (down)
@@ -114,20 +116,33 @@ class PendulumSimulator:
         dt = min(dt, 0.01)
         
         # --- Cart dynamics ---
-        # Accelerate towards target velocity
         old_cart_velocity = self.cart_velocity
-        velocity_error = self.target_velocity - self.cart_velocity
-        max_accel_change = self.config.motor_accel * dt
         
-        if abs(velocity_error) < max_accel_change:
-            self.cart_velocity = self.target_velocity
+        if self.use_acceleration_command:
+            # Direct acceleration command mode
+            # Clamp acceleration to motor limits
+            target_accel = max(-self.config.motor_accel, min(self.config.motor_accel, self.target_acceleration))
+            # Update velocity based on acceleration
+            self.cart_velocity += target_accel * dt
+            # Clamp velocity to max speed
+            max_speed = 50000  # Maximum cart speed (steps/s)
+            self.cart_velocity = max(-max_speed, min(max_speed, self.cart_velocity))
+            cart_accel = target_accel
         else:
-            self.cart_velocity += math.copysign(max_accel_change, velocity_error)
+            # Velocity command mode (backward compatibility)
+            # Accelerate towards target velocity
+            velocity_error = self.target_velocity - self.cart_velocity
+            max_accel_change = self.config.motor_accel * dt
+            
+            if abs(velocity_error) < max_accel_change:
+                self.cart_velocity = self.target_velocity
+                cart_accel = 0.0
+            else:
+                cart_accel = math.copysign(max_accel_change, velocity_error) / dt
+                self.cart_velocity += cart_accel * dt
         
-        # Calculate ACTUAL cart acceleration (for pendulum coupling)
-        # This is the real acceleration that was applied, not the desired one
-        cart_accel = (self.cart_velocity - old_cart_velocity) / dt if dt > 0 else 0
-        self.cart_acceleration = cart_accel  # Store for get_state()
+        # Store actual cart acceleration (for pendulum coupling)
+        self.cart_acceleration = cart_accel
         
         # Update cart position
         old_position = self.cart_position
@@ -143,6 +158,9 @@ class PendulumSimulator:
                 self.cart_velocity = 0
                 if self.target_velocity < 0:
                     self.target_velocity = 0
+                # Stop acceleration if trying to move left
+                if self.use_acceleration_command and self.target_acceleration < 0:
+                    self.target_acceleration = 0
         
         if limit_right:
             self.cart_position = self.limit_right_pos
@@ -150,6 +168,9 @@ class PendulumSimulator:
                 self.cart_velocity = 0
                 if self.target_velocity > 0:
                     self.target_velocity = 0
+                # Stop acceleration if trying to move right
+                if self.use_acceleration_command and self.target_acceleration > 0:
+                    self.target_acceleration = 0
         
         # --- Pendulum dynamics ---
         # Convert cart acceleration from steps/s² to m/s²
@@ -371,6 +392,13 @@ class PendulumSimulator:
         """Set target velocity for the cart"""
         with self._lock:
             self.target_velocity = velocity
+            self.use_acceleration_command = False
+    
+    def set_target_acceleration(self, acceleration: float):
+        """Set target acceleration for the cart (steps/s²)"""
+        with self._lock:
+            self.target_acceleration = acceleration
+            self.use_acceleration_command = True
     
     def close(self):
         """Stop the simulator"""

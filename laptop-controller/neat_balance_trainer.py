@@ -11,7 +11,7 @@ Inputs (4):
   - Cart velocity (normalized)
 
 Output (1):
-  - Cart velocity command (-1 to 1, scaled to max speed)
+  - Cart acceleration command (-1 to 1, scaled to max acceleration)
 
 Usage:
   python neat_balance_trainer.py              # Train new network
@@ -134,13 +134,15 @@ def evaluate_genome(genome, config):
             state['cart_velocity'] / MAX_SPEED,                   # Cart velocity (normalized)
         ]
         
-        # Get network output
+        # Get network output (acceleration command)
         output = net.activate(inputs)
-        target_velocity = output[0] * MAX_SPEED
-        target_velocity = max(-MAX_SPEED, min(MAX_SPEED, target_velocity))
+        # Scale output to acceleration range (-1 to 1 maps to -max_accel to +max_accel)
+        max_accel = sim_config.motor_accel  # steps/s²
+        target_acceleration = output[0] * max_accel
+        target_acceleration = max(-max_accel, min(max_accel, target_acceleration))
         
-        # Set target velocity and step physics
-        sim.set_target_velocity(target_velocity)
+        # Set target acceleration and step physics
+        sim.set_target_acceleration(target_acceleration)
         sim.step(EVAL_DT)
         
         # --- Fitness calculation ---
@@ -366,13 +368,15 @@ def test_best_genome():
                 state['cart_velocity'] / MAX_SPEED,
             ]
             
-            # Get network output
+            # Get network output (acceleration command)
             output = net.activate(inputs)
-            target_velocity = output[0] * MAX_SPEED
-            target_velocity = max(-MAX_SPEED, min(MAX_SPEED, target_velocity))
+            # Scale output to acceleration range
+            max_accel = sim_config.motor_accel  # steps/s²
+            target_acceleration = output[0] * max_accel
+            target_acceleration = max(-max_accel, min(max_accel, target_acceleration))
             
-            # Set target velocity and step physics
-            sim.set_target_velocity(target_velocity)
+            # Set target acceleration and step physics
+            sim.set_target_acceleration(target_acceleration)
             sim.step(EVAL_DT)
             
             # Print every 0.5 seconds
@@ -380,7 +384,7 @@ def test_best_genome():
                 state = sim.get_state()
                 time_s = step * EVAL_DT
                 angle_display = math.degrees(state['pendulum_angle'])
-                print(f"{time_s:7.1f} | {angle_display:8.1f} | {target_velocity:8.0f} | {state['cart_position']:8.0f}")
+                print(f"{time_s:7.1f} | {angle_display:8.1f} | {target_acceleration:8.0f} | {state['cart_position']:8.0f}")
             
             time.sleep(EVAL_DT / 10)  # Speed up visualization
             
