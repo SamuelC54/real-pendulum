@@ -276,7 +276,7 @@ function showUploadStatus(message: string, type: 'uploading' | 'success' | 'erro
 
 // Training progress display
 let trainingActive = false;
-let selectedTrainingType: 'swing-up' | 'balance' | 'sklearn' = 'swing-up';
+let selectedTrainingType: 'swing-up' | 'balance' | 'sklearn' | 'evotorch' = 'swing-up';
 
 // Store genome info for both training types
 let bestGenomeSwingUp: any = null;
@@ -289,6 +289,8 @@ function sendStartTraining() {
       type = 'START_BALANCE_TRAINING';
     } else if (selectedTrainingType === 'sklearn') {
       type = 'START_SKLEARN_TRAINING';
+    } else if (selectedTrainingType === 'evotorch') {
+      type = 'START_EVOTORCH_TRAINING';
     }
     ws.send(JSON.stringify({ type }));
   }
@@ -337,7 +339,7 @@ function setupTabs() {
   const tabs = document.querySelectorAll('.neat-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance' | 'sklearn';
+      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance' | 'sklearn' | 'evotorch';
       if (tabType) {
         selectedTrainingType = tabType;
         tabs.forEach(t => t.classList.remove('active'));
@@ -346,11 +348,15 @@ function setupTabs() {
         // Show/hide content sections
         const neatContent = document.getElementById('neat-training-content');
         const sklearnContent = document.getElementById('sklearn-training-content');
+        const evotorchContent = document.getElementById('evotorch-training-content');
         if (neatContent) {
           neatContent.style.display = (tabType === 'swing-up' || tabType === 'balance') ? 'block' : 'none';
         }
         if (sklearnContent) {
           sklearnContent.style.display = tabType === 'sklearn' ? 'block' : 'none';
+        }
+        if (evotorchContent) {
+          evotorchContent.style.display = tabType === 'evotorch' ? 'block' : 'none';
         }
         
         // Show/hide balance-specific perturbation config
@@ -451,6 +457,11 @@ function updateTrainingDisplay(data: any) {
   // Update based on training type
   if (data.trainer === 'sklearn' || selectedTrainingType === 'sklearn') {
     updateSklearnTrainingDisplay(data);
+    return;
+  }
+  
+  if (data.trainer === 'evotorch' || selectedTrainingType === 'evotorch') {
+    updateEvotorchTrainingDisplay(data);
     return;
   }
   
@@ -587,6 +598,49 @@ if (applySklearnConfigBtn) {
       sendSklearnConfig();
     }
   });
+}
+
+const applyEvotorchConfigBtn = document.getElementById('btn-apply-evotorch-config');
+if (applyEvotorchConfigBtn) {
+  applyEvotorchConfigBtn.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      sendEvotorchConfig();
+    }
+  });
+}
+
+function updateEvotorchTrainingDisplay(data: any) {
+  const genEl = document.getElementById('evotorch-generation');
+  const bestEl = document.getElementById('evotorch-best-fitness');
+  const currentEl = document.getElementById('evotorch-current-fitness');
+  const popEl = document.getElementById('evotorch-population');
+  
+  if (genEl) genEl.textContent = data.generation?.toString() || '0';
+  if (bestEl) bestEl.textContent = data.best_fitness?.toFixed(1) || '0';
+  if (currentEl) currentEl.textContent = data.current_fitness?.toFixed(1) || '0';
+  if (popEl) popEl.textContent = data.population_size?.toString() || '50';
+  
+  // Update fitness graph
+  const canvas = document.getElementById('evotorch-fitness-canvas') as HTMLCanvasElement;
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const w = canvas.width;
+      const h = canvas.height;
+      
+      // Clear
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fillRect(0, 0, w, h);
+      
+      // Simple display - just show current and best
+      ctx.strokeStyle = '#4a9eff';
+      ctx.lineWidth = 2;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#4a9eff';
+      ctx.fillText(`Best: ${data.best_fitness?.toFixed(1) || '0'}`, 2, 12);
+      ctx.fillText(`Current: ${data.current_fitness?.toFixed(1) || '0'}`, 2, 24);
+    }
+  }
 }
 
 function updateSklearnTrainingDisplay(data: any) {

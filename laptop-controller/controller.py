@@ -48,9 +48,8 @@ neat_network = None  # Loaded on startup if available
 sklearn_rl_model = None
 sklearn_rl_scaler = None
 
-# Sklearn RL model
-sklearn_rl_model = None
-sklearn_rl_scaler = None
+# EvoTorch model
+evotorch_model = None
 
 # ============ CONFIGURATION ============
 SERIAL_PORT = "COM3"
@@ -315,6 +314,81 @@ def load_sklearn_rl_model():
         sklearn_rl_scaler = None
         return False
 
+def load_evotorch_model():
+    """Load the EvoTorch model if available"""
+    global evotorch_model
+    
+    model_path = os.path.join(os.path.dirname(__file__), 'evotorch_balance_model.pkl')
+    
+    if not os.path.exists(model_path):
+        print(f"EvoTorch: No trained model found at {model_path}", flush=True)
+        evotorch_model = None
+        return False
+    
+    try:
+        import pickle
+        import torch
+        import torch.nn as nn
+        
+        # Import BalancePolicy class so pickle can deserialize it
+        # The model was saved from evotorch_balance_trainer, so we need to make sure
+        # pickle can find the class in the right namespace
+        try:
+            from evotorch_balance_trainer import BalancePolicy
+            print("EvoTorch: Imported BalancePolicy from trainer module", flush=True)
+            
+            # Make sure pickle can find it - register it in sys.modules if needed
+            import sys
+            # If the model was saved from __main__, we need to make BalancePolicy available there
+            if '__main__' in sys.modules:
+                main_module = sys.modules['__main__']
+                if not hasattr(main_module, 'BalancePolicy'):
+                    main_module.BalancePolicy = BalancePolicy
+                    print("EvoTorch: Registered BalancePolicy in __main__ module", flush=True)
+        except ImportError as import_err:
+            print(f"EvoTorch: Could not import BalancePolicy, defining inline: {import_err}", flush=True)
+            # Define BalancePolicy class if import fails
+            class BalancePolicy(nn.Module):
+                """Neural network policy for balance control (2 hidden layers, 10 nodes each)"""
+                def __init__(self, input_size=5, hidden_size=10, output_size=1):
+                    super(BalancePolicy, self).__init__()
+                    self.fc1 = nn.Linear(input_size, hidden_size)
+                    self.fc2 = nn.Linear(hidden_size, hidden_size)
+                    self.fc3 = nn.Linear(hidden_size, output_size)
+                    self.activation = nn.Tanh()
+                
+                def forward(self, x):
+                    x = self.activation(self.fc1(x))
+                    x = self.activation(self.fc2(x))
+                    x = torch.tanh(self.fc3(x))  # Output in [-1, 1] range
+                    return x
+            
+            # Register in __main__ for pickle
+            import sys
+            if '__main__' in sys.modules:
+                sys.modules['__main__'].BalancePolicy = BalancePolicy
+        
+        print(f"EvoTorch: Loading model from {model_path}...", flush=True)
+        with open(model_path, 'rb') as f:
+            evotorch_model = pickle.load(f)
+        
+        if hasattr(evotorch_model, 'eval'):
+            evotorch_model.eval()
+        
+        # Test the model with a dummy input to make sure it works
+        test_input = torch.tensor([0.0, 1.0, 0.0, 0.0, 0.0], dtype=torch.float32)
+        with torch.no_grad():
+            _ = evotorch_model(test_input)
+        
+        print(f"EvoTorch: Successfully loaded trained model from {model_path}", flush=True)
+        return True
+    except Exception as e:
+        print(f"EvoTorch: Failed to load model: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        evotorch_model = None
+        return False
+
 def normalize_angle_for_neat(angle_deg):
     """Normalize angle so 180° (upright) = 0, range [-1, 1]"""
     # In our system: 0° = down, 180° = up
@@ -512,6 +586,9 @@ def compute_acceleration() -> int:
     elif state.mode == "sklearn_rl":
         return compute_sklearn_rl()
     
+    elif state.mode == "evotorch_balance":
+        return compute_evotorch_balance()
+    
     elif state.mode == "homing":
         return compute_homing()
     
@@ -646,6 +723,55 @@ def compute_sklearn_rl() -> int:
     q_value = sklearn_rl_model.predict(state_scaled)
     action = float(q_value.flat[0])  # Extract scalar value
     action = np.clip(action, -1.0, 1.0)
+    
+    # Convert to acceleration
+    max_accel = config.manual_accel
+    acceleration = action * max_accel
+    
+    # Respect limits
+    if state.limit_left and acceleration < 0:
+        acceleration = 0
+    if state.limit_right and acceleration > 0:
+        acceleration = 0
+    
+    # Return acceleration (will be handled by send_acceleration)
+    return int(acceleration)
+
+def compute_evotorch_balance() -> int:
+    """Use EvoTorch model to control the pendulum (acceleration-only control)"""
+    global evotorch_model
+    
+    # Try to reload if None (in case model was saved after controller started)
+    if evotorch_model is None:
+        print("EvoTorch model not loaded, attempting to reload...", flush=True)
+        if load_evotorch_model():
+            print("EvoTorch model reloaded successfully!", flush=True)
+        else:
+            print("EvoTorch model not loaded! Going to idle.", flush=True)
+            state.mode = "idle"
+            return 0
+    
+    # Get rail limits for normalization
+    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
+    
+    # Prepare inputs using sin(θ) and cos(θ) to match trainer (5 inputs)
+    import math
+    import torch
+    angle_rad = math.radians(state.angle)
+    state_vec = torch.tensor([
+        math.sin(angle_rad),  # sin(θ)
+        math.cos(angle_rad),  # cos(θ)
+        state.angular_velocity / 1000.0,  # Angular velocity (normalized)
+        state.position / rail_half,  # Cart position (normalized)
+        state.velocity / config.neat_max_speed  # Cart velocity (normalized)
+    ], dtype=torch.float32)
+    
+    # Get action from model
+    with torch.no_grad():
+        action = evotorch_model(state_vec).item()
+    
+    # Clip to [-1, 1] range
+    action = max(-1.0, min(1.0, action))
     
     # Convert to acceleration
     max_accel = config.manual_accel
@@ -813,14 +939,37 @@ async def start_sklearn_training():
     
     await broadcast_message({"type": "TRAINING_STARTED", "trainer": "sklearn"})
 
+async def start_evotorch_training():
+    """Start EvoTorch training in background process"""
+    global training_process
+    
+    if training_process and training_process.poll() is None:
+        print("Training already running!")
+        return
+    
+    print("Starting EvoTorch training...", flush=True)
+    
+    # Clear old status file
+    if os.path.exists(TRAINING_STATUS_FILE):
+        os.remove(TRAINING_STATUS_FILE)
+    
+    # Start evotorch training process
+    trainer_path = os.path.join(os.path.dirname(__file__), 'evotorch_balance_trainer.py')
+    training_process = subprocess.Popen(
+        [sys.executable, trainer_path],
+        cwd=os.path.dirname(__file__)
+    )
+    
+    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "evotorch"})
+
 async def stop_training():
-    """Stop training (works for both NEAT and sklearn)"""
+    """Stop training (works for both NEAT, sklearn, and evotorch)"""
     global training_process, last_training_status
     
     if training_process and training_process.poll() is None:
         print("Stopping training...", flush=True)
         
-        # Create stop flag for sklearn trainer
+        # Create stop flag for trainers
         stop_flag = os.path.join(os.path.dirname(__file__), 'stop_training.flag')
         with open(stop_flag, 'w') as f:
             f.write('stop')
@@ -841,9 +990,12 @@ async def stop_training():
         last_training_status = None
         
         # Reload models if they exist
-        global neat_network, sklearn_rl_model
+        global neat_network, sklearn_rl_model, evotorch_model
         load_neat_network()
+        load_balance_network()
         load_sklearn_rl_model()
+        load_evotorch_model()
+        load_evotorch_model()
         
         await broadcast_message({"type": "TRAINING_STOPPED"})
     else:
@@ -1037,9 +1189,9 @@ async def handle_command(message: str, websocket=None):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only", "sklearn_rl"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only", "sklearn_rl", "evotorch_balance"]:
                 # Reset pendulum to upright in simulator when entering balance modes
-                if new_mode in ["neat_balance_only", "sklearn_rl"] and SIMULATOR_MODE and serial_port:
+                if new_mode in ["neat_balance_only", "sklearn_rl", "evotorch_balance"] and SIMULATOR_MODE and serial_port:
                     serial_port.set_pendulum_upright()
                     print(f"Simulator: Reset pendulum to upright (180°) for {new_mode}")
                 
@@ -1096,6 +1248,10 @@ async def handle_command(message: str, websocket=None):
             # Start sklearn RL training in background
             await start_sklearn_training()
         
+        elif cmd_type == "START_EVOTORCH_TRAINING":
+            # Start EvoTorch training in background
+            await start_evotorch_training()
+        
         elif cmd_type == "STOP_TRAINING":
             # Stop training (works for both NEAT and sklearn)
             await stop_training()
@@ -1112,6 +1268,10 @@ async def handle_command(message: str, websocket=None):
         elif cmd_type == "SKLEARN_CONFIG":
             # Update sklearn config
             await update_sklearn_config(cmd)
+        
+        elif cmd_type == "EVOTORCH_CONFIG":
+            # Update evotorch config
+            await update_evotorch_config(cmd)
         
         elif cmd_type == "GET_NEAT_CONFIG":
             # Get NEAT config for a specific trainer
@@ -1181,7 +1341,18 @@ last_training_status = None
 
 async def check_training_status():
     """Read training status from file and broadcast if changed"""
-    global last_training_status
+    global last_training_status, training_process
+    
+    # Check if training process finished
+    if training_process and training_process.poll() is not None:
+        # Process finished - reload models in case new ones were saved
+        print("Training process finished, reloading models...", flush=True)
+        load_neat_network()
+        load_balance_network()
+        load_sklearn_rl_model()
+        load_evotorch_model()
+        training_process = None
+        await broadcast_message({"type": "TRAINING_STOPPED"})
     
     if not os.path.exists(TRAINING_STATUS_FILE):
         return
@@ -1271,6 +1442,7 @@ async def main():
     load_neat_network()
     load_balance_network()
     load_sklearn_rl_model()
+    load_evotorch_model()
     get_neat_config()
     
     # Connect to Arduino or simulator

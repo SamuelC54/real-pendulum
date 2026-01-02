@@ -5,6 +5,8 @@ websockets
 neat-python==0.92
 numpy>=1.20.0
 scikit-learn>=1.0.0
+torch>=2.0.0
+evotorch>=0.5.0
 
 
 

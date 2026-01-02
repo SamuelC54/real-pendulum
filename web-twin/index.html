@@ -17,6 +17,7 @@
           <button class="neat-tab active" data-tab="swing-up">🚀 Swing-Up</button>
           <button class="neat-tab" data-tab="balance">⚖ Balance</button>
           <button class="neat-tab" data-tab="sklearn">🤖 Sklearn RL</button>
+          <button class="neat-tab" data-tab="evotorch">🧬 EvoTorch</button>
         </div>
         
         <!-- Training Controls -->
@@ -165,6 +166,60 @@
             </button>
           </div>
         </div>
+        
+        <!-- EvoTorch Training Content -->
+        <div id="evotorch-training-content" style="display: none;">
+          <div class="training-stats">
+            <div class="stat-row">
+              <span class="stat-label">Generation:</span>
+              <span id="evotorch-generation" class="stat-value">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Best Fitness:</span>
+              <span id="evotorch-best-fitness" class="stat-value">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Current Fitness:</span>
+              <span id="evotorch-current-fitness" class="stat-value">0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Population:</span>
+              <span id="evotorch-population" class="stat-value">50</span>
+            </div>
+          </div>
+          
+          <div class="fitness-graph">
+            <canvas id="evotorch-fitness-canvas" width="280" height="80"></canvas>
+          </div>
+          
+          <h3>Config</h3>
+          
+          <div class="config-row">
+            <label>Generations</label>
+            <input type="number" id="evotorch-generations" value="100" min="10" max="10000" step="10">
+          </div>
+          
+          <div class="config-row">
+            <label>Population Size</label>
+            <input type="number" id="evotorch-population-size" value="50" min="10" max="500" step="10">
+          </div>
+          
+          <div class="config-row">
+            <label>Max Speed</label>
+            <input type="number" id="evotorch-max-speed" value="9000" min="1000" max="500000" step="1000">
+          </div>
+          
+          <div class="config-row">
+            <label>Sim Steps</label>
+            <input type="number" id="evotorch-sim-steps" value="5000" min="100" max="10000" step="100">
+          </div>
+          
+          <div class="control-row" style="margin-top: 8px;">
+            <button id="btn-apply-evotorch-config" class="control-btn">
+              Apply Config
+            </button>
+          </div>
+        </div>
       </div>
       
       <div id="pendulum-container" class="disconnected">
@@ -243,6 +298,9 @@
             </button>
             <button id="btn-sklearn-rl" class="control-btn toggle-btn neat-btn" data-mode="sklearn_rl">
               🤖 Sklearn RL
+            </button>
+            <button id="btn-evotorch-balance" class="control-btn toggle-btn neat-btn" data-mode="evotorch_balance">
+              🧬 EvoTorch
             </button>
           </div>
           
