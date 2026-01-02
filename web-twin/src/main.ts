@@ -357,6 +357,10 @@ function setupTabs() {
         }
         if (evotorchContent) {
           evotorchContent.style.display = tabType === 'evotorch' ? 'block' : 'none';
+          // Request generation history when tab is selected
+          if (tabType === 'evotorch' && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'GET_EVOTORCH_GENERATIONS' }));
+          }
         }
         
         // Show/hide balance-specific perturbation config
@@ -641,7 +645,52 @@ function updateEvotorchTrainingDisplay(data: any) {
       ctx.fillText(`Current: ${data.current_fitness?.toFixed(1) || '0'}`, 2, 24);
     }
   }
+  
+  // Request generation history update
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'GET_EVOTORCH_GENERATIONS' }));
+  }
 }
+
+function updateEvotorchGenerationList(generations: any) {
+  const listEl = document.getElementById('evotorch-generation-list');
+  if (!listEl) return;
+  
+  if (!generations || Object.keys(generations).length === 0) {
+    listEl.innerHTML = '<div style="color: #888; font-size: 12px;">No generations yet</div>';
+    return;
+  }
+  
+  // Sort by generation number (descending)
+  const sorted = Object.values(generations).sort((a: any, b: any) => b.generation - a.generation);
+  
+  listEl.innerHTML = sorted.map((gen: any) => {
+    const date = new Date(gen.timestamp * 1000);
+    const dateStr = date.toLocaleTimeString();
+    return `
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #333; cursor: pointer;" 
+           onclick="previewEvotorchGeneration(${gen.generation})"
+           onmouseover="this.style.background='#2a2a2a'" 
+           onmouseout="this.style.background='transparent'">
+        <div>
+          <span style="color: #4a9eff; font-weight: bold;">Gen ${gen.generation}</span>
+          <span style="color: #888; margin-left: 8px;">Fitness: ${gen.fitness?.toFixed(1) || '0'}</span>
+          <span style="color: #888; margin-left: 8px;">Best: ${gen.best_fitness?.toFixed(1) || '0'}</span>
+        </div>
+        <div style="color: #666; font-size: 11px;">${dateStr}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function previewEvotorchGeneration(generation: number) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'PREVIEW_EVOTORCH_GENERATION', generation }));
+  }
+}
+
+// Make previewEvotorchGeneration available globally
+(window as any).previewEvotorchGeneration = previewEvotorchGeneration;
 
 function updateSklearnTrainingDisplay(data: any) {
   const episodeEl = document.getElementById('sklearn-episode');
@@ -855,6 +904,20 @@ function connect() {
           const stopBtn = document.getElementById('btn-stop-training');
           if (startBtn) startBtn.style.display = 'block';
           if (stopBtn) stopBtn.style.display = 'none';
+        }
+        
+        if (data.type === 'EVOTORCH_GENERATIONS') {
+          updateEvotorchGenerationList(data.generations);
+        }
+        
+        if (data.type === 'PREVIEW_RESULT') {
+          if (data.success) {
+            showUploadStatus(`Previewing generation ${data.generation} (Fitness: ${data.fitness?.toFixed(1) || '0'})`, 'success');
+            // Switch to evotorch_balance mode
+            sendMode('evotorch_balance');
+          } else {
+            showUploadStatus(`Preview failed: ${data.message}`, 'error');
+          }
         }
         
         if (data.type === 'NEAT_CONFIG_DATA') {

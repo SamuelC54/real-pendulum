@@ -15,6 +15,11 @@ training_status.json
 sklearn_rl_model.pkl
 sklearn_rl_scaler.pkl
 
+# EvoTorch training
+laptop-controller/evotorch_checkpoints/
+laptop-controller/evotorch_generation_history.json
+laptop-controller/evotorch_balance_model.pkl
+
 # IDE
 .vscode/
 .idea/

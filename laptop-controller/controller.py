@@ -1078,6 +1078,130 @@ async def update_neat_config(cmd: dict):
     except Exception as e:
         print(f"Error updating NEAT config: {e}", flush=True)
 
+async def send_evotorch_generations(websocket):
+    """Send generation history to client"""
+    history_file = os.path.join(os.path.dirname(__file__), 'evotorch_generation_history.json')
+    
+    try:
+        if os.path.exists(history_file):
+            with open(history_file, 'r') as f:
+                history = json.load(f)
+        else:
+            history = {}
+        
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_GENERATIONS",
+            "generations": history
+        }))
+    except Exception as e:
+        print(f"Error sending generation history: {e}", flush=True)
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_GENERATIONS",
+            "generations": {},
+            "error": str(e)
+        }))
+
+async def preview_evotorch_generation(websocket, generation: int):
+    """Load and preview a specific generation's model"""
+    global evotorch_model
+    
+    history_file = os.path.join(os.path.dirname(__file__), 'evotorch_generation_history.json')
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'evotorch_checkpoints')
+    
+    try:
+        # Load generation history
+        if not os.path.exists(history_file):
+            await websocket.send(json.dumps({
+                "type": "PREVIEW_RESULT",
+                "success": False,
+                "message": "No generation history found"
+            }))
+            return
+        
+        with open(history_file, 'r') as f:
+            history = json.load(f)
+        
+        gen_key = str(generation)
+        if gen_key not in history:
+            await websocket.send(json.dumps({
+                "type": "PREVIEW_RESULT",
+                "success": False,
+                "message": f"Generation {generation} not found"
+            }))
+            return
+        
+        gen_info = history[gen_key]
+        checkpoint_path = gen_info.get('checkpoint')
+        
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            # Try to construct path
+            checkpoint_path = os.path.join(checkpoint_dir, f'generation_{generation}.pkl')
+            if not os.path.exists(checkpoint_path):
+                await websocket.send(json.dumps({
+                    "type": "PREVIEW_RESULT",
+                    "success": False,
+                    "message": f"Checkpoint file not found for generation {generation}"
+                }))
+                return
+        
+        # Import BalancePolicy class
+        try:
+            from evotorch_balance_trainer import BalancePolicy
+            import sys
+            if '__main__' in sys.modules:
+                sys.modules['__main__'].BalancePolicy = BalancePolicy
+        except ImportError:
+            # Define inline if import fails
+            import torch.nn as nn
+            import torch
+            class BalancePolicy(nn.Module):
+                def __init__(self, input_size=5, hidden_size=10, output_size=1):
+                    super(BalancePolicy, self).__init__()
+                    self.fc1 = nn.Linear(input_size, hidden_size)
+                    self.fc2 = nn.Linear(hidden_size, hidden_size)
+                    self.fc3 = nn.Linear(hidden_size, output_size)
+                    self.activation = nn.Tanh()
+                
+                def forward(self, x):
+                    x = self.activation(self.fc1(x))
+                    x = self.activation(self.fc2(x))
+                    x = torch.tanh(self.fc3(x))
+                    return x
+        
+        # Load the model
+        import pickle
+        with open(checkpoint_path, 'rb') as f:
+            preview_model = pickle.load(f)
+        
+        preview_model.eval()
+        
+        # Temporarily replace the current model for preview
+        evotorch_model = preview_model
+        
+        # Switch to evotorch_balance mode for preview
+        state.mode = "evotorch_balance"
+        
+        await websocket.send(json.dumps({
+            "type": "PREVIEW_RESULT",
+            "success": True,
+            "generation": generation,
+            "fitness": gen_info.get('fitness'),
+            "best_fitness": gen_info.get('best_fitness'),
+            "message": f"Previewing generation {generation}. Click 'Stop' to exit preview."
+        }))
+        
+        print(f"Previewing generation {generation} (fitness: {gen_info.get('fitness', 0):.1f})", flush=True)
+        
+    except Exception as e:
+        print(f"Error previewing generation {generation}: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        await websocket.send(json.dumps({
+            "type": "PREVIEW_RESULT",
+            "success": False,
+            "message": f"Error: {str(e)}"
+        }))
+
 async def update_sklearn_config(cmd: dict):
     """Update sklearn training configuration in JSON file"""
     episodes = cmd.get('episodes', 1000)
@@ -1272,6 +1396,15 @@ async def handle_command(message: str, websocket=None):
         elif cmd_type == "EVOTORCH_CONFIG":
             # Update evotorch config
             await update_evotorch_config(cmd)
+        
+        elif cmd_type == "GET_EVOTORCH_GENERATIONS":
+            # Send generation history
+            await send_evotorch_generations(websocket)
+        
+        elif cmd_type == "PREVIEW_EVOTORCH_GENERATION":
+            # Load and preview a specific generation
+            generation = cmd.get('generation')
+            await preview_evotorch_generation(websocket, generation)
         
         elif cmd_type == "GET_NEAT_CONFIG":
             # Get NEAT config for a specific trainer

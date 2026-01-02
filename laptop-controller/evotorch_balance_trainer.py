@@ -43,6 +43,8 @@ except ImportError:
 
 # Paths
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'evotorch_balance_model.pkl')
+CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), 'evotorch_checkpoints')
+GENERATION_HISTORY_FILE = os.path.join(os.path.dirname(__file__), 'evotorch_generation_history.json')
 TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
 TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
 STOP_TRAINING_FILE = os.path.join(os.path.dirname(__file__), 'stop_training.flag')
@@ -512,6 +514,34 @@ def train():
             # Save the latest model
             with open(MODEL_PATH, 'wb') as f:
                 pickle.dump(policy, f)
+            
+            # Save checkpoint for this generation
+            gen_num = generation + 1
+            os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+            checkpoint_path = os.path.join(CHECKPOINT_DIR, f'generation_{gen_num}.pkl')
+            with open(checkpoint_path, 'wb') as f:
+                pickle.dump(policy, f)
+            
+            # Update generation history
+            history = {}
+            if os.path.exists(GENERATION_HISTORY_FILE):
+                try:
+                    with open(GENERATION_HISTORY_FILE, 'r') as f:
+                        history = json.load(f)
+                except:
+                    history = {}
+            
+            history[str(gen_num)] = {
+                'generation': gen_num,
+                'fitness': current_fitness,
+                'best_fitness': best_fitness,
+                'checkpoint': checkpoint_path,
+                'timestamp': time.time()
+            }
+            
+            with open(GENERATION_HISTORY_FILE, 'w') as f:
+                json.dump(history, f, indent=2)
+            
             if (generation + 1) % 10 == 0:
                 print(f"Generation {generation + 1}, Saved latest model (fitness: {current_fitness:.1f})")
         
