@@ -481,35 +481,39 @@ def train():
             print(f"Warning: Failed to evaluate best solution: {e}", flush=True)
             current_fitness = float('-inf')
         
+        # Update best fitness tracking
         if current_fitness > best_fitness:
             best_fitness = current_fitness
-            # Save best model
-            policy = BalancePolicy()
-            param_idx = 0
-            try:
-                # Get best parameters
-                if hasattr(best_solution, 'values'):
-                    best_params = best_solution.values.cpu().numpy()
-                elif isinstance(best_solution, torch.Tensor):
-                    best_params = best_solution.cpu().numpy()
-                else:
-                    best_params = np.array(best_solution)
-                
-                with torch.no_grad():
-                    for param in policy.parameters():
-                        param_size = param.numel()
-                        param.data = torch.tensor(
-                            best_params[param_idx:param_idx + param_size],
-                            dtype=torch.float32
-                        ).reshape(param.shape)
-                        param_idx += param_size
-            except Exception as e:
-                print(f"Warning: Failed to save model: {e}", flush=True)
-                continue
+            print(f"Generation {generation + 1}, New best fitness: {best_fitness:.1f}")
+        
+        # Save latest model (not just best)
+        policy = BalancePolicy()
+        param_idx = 0
+        try:
+            # Get current best solution parameters
+            if hasattr(best_solution, 'values'):
+                best_params = best_solution.values.cpu().numpy()
+            elif isinstance(best_solution, torch.Tensor):
+                best_params = best_solution.cpu().numpy()
+            else:
+                best_params = np.array(best_solution)
             
+            with torch.no_grad():
+                for param in policy.parameters():
+                    param_size = param.numel()
+                    param.data = torch.tensor(
+                        best_params[param_idx:param_idx + param_size],
+                        dtype=torch.float32
+                    ).reshape(param.shape)
+                    param_idx += param_size
+        except Exception as e:
+            print(f"Warning: Failed to save model: {e}", flush=True)
+        else:
+            # Save the latest model
             with open(MODEL_PATH, 'wb') as f:
                 pickle.dump(policy, f)
-            print(f"Generation {generation + 1}, New best fitness: {best_fitness:.1f}, saved model")
+            if (generation + 1) % 10 == 0:
+                print(f"Generation {generation + 1}, Saved latest model (fitness: {current_fitness:.1f})")
         
         # Send training update
         send_training_update({
