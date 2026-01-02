@@ -613,6 +613,17 @@ if (applyEvotorchConfigBtn) {
   });
 }
 
+const viewPopulationBtn = document.getElementById('btn-view-population');
+if (viewPopulationBtn) {
+  viewPopulationBtn.addEventListener('click', () => {
+    const genInput = document.getElementById('evotorch-view-generation') as HTMLInputElement;
+    const generation = parseInt(genInput?.value || '0');
+    if (generation > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      viewEvotorchPopulation(generation);
+    }
+  });
+}
+
 function updateEvotorchTrainingDisplay(data: any) {
   const genEl = document.getElementById('evotorch-generation');
   const bestEl = document.getElementById('evotorch-best-fitness');
@@ -669,7 +680,7 @@ function updateEvotorchGenerationList(generations: any) {
     const dateStr = date.toLocaleTimeString();
     return `
       <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #333; cursor: pointer;" 
-           onclick="previewEvotorchGeneration(${gen.generation})"
+           onclick="viewEvotorchGenerationRecordings(${gen.generation})"
            onmouseover="this.style.background='#2a2a2a'" 
            onmouseout="this.style.background='transparent'">
         <div>
@@ -677,20 +688,245 @@ function updateEvotorchGenerationList(generations: any) {
           <span style="color: #888; margin-left: 8px;">Fitness: ${gen.fitness?.toFixed(1) || '0'}</span>
           <span style="color: #888; margin-left: 8px;">Best: ${gen.best_fitness?.toFixed(1) || '0'}</span>
         </div>
-        <div style="color: #666; font-size: 11px;">${dateStr}</div>
+        <div style="color: #666; font-size: 11px;">${dateStr} ▶ View All</div>
       </div>
     `;
   }).join('');
 }
 
+function viewEvotorchGenerationRecordings(generation: number) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Request all population recordings for this generation
+    ws.send(JSON.stringify({ type: 'GET_EVOTORCH_POPULATION_RECORDS', generation }));
+  }
+}
+
+// State for population visualization
+let populationRecordings: any[] = [];
+let populationAnimationFrame: number | null = null;
+let populationCurrentStep = 0;
+let populationMaxSteps = 0;
+let isPlayingPopulation = false;
+let populationPendulums: any[] = [];
+
 function previewEvotorchGeneration(generation: number) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'PREVIEW_EVOTORCH_GENERATION', generation }));
+    // Request all population recordings for this generation
+    ws.send(JSON.stringify({ type: 'GET_EVOTORCH_POPULATION_RECORDS', generation }));
   }
 }
 
 // Make previewEvotorchGeneration available globally
 (window as any).previewEvotorchGeneration = previewEvotorchGeneration;
+
+function viewEvotorchPopulation(generation: number) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'GET_EVOTORCH_POPULATION_RECORDS', generation }));
+  }
+}
+
+function viewEvotorchPopulationRecording(generation: number, solutionId: number) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'GET_EVOTORCH_SOLUTION_RECORDING', generation, solution_id: solutionId }));
+  }
+}
+
+function updateEvotorchPopulationList(records: any, generation: number) {
+  const listEl = document.getElementById('evotorch-population-list');
+  if (!listEl) return;
+  
+  listEl.style.display = 'block';
+  
+  if (!records || Object.keys(records).length === 0) {
+    listEl.innerHTML = '<div style="color: #888; font-size: 12px;">No population records found for this generation</div>';
+    return;
+  }
+  
+  // Sort by solution ID
+  const sorted = Object.values(records).sort((a: any, b: any) => a.solution_id - b.solution_id);
+  
+  listEl.innerHTML = `
+    <div style="color: #4a9eff; font-weight: bold; margin-bottom: 8px;">Generation ${generation} - Population (${sorted.length} solutions)</div>
+    <div style="color: #888; font-size: 12px; margin-bottom: 8px;">Loading all recordings...</div>
+  `;
+  
+  // Request all recordings
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sorted.forEach((rec: any) => {
+      ws.send(JSON.stringify({ 
+        type: 'GET_EVOTORCH_SOLUTION_RECORDING', 
+        generation, 
+        solution_id: rec.solution_id 
+      }));
+    });
+  }
+}
+
+function addPopulationRecording(recording: any, generation: number, solutionId: number) {
+  if (!recording || !recording.trajectory) return;
+  
+  // Store the recording
+  populationRecordings.push({
+    generation,
+    solutionId,
+    fitness: recording.fitness,
+    trajectory: recording.trajectory
+  });
+  
+  // Update max steps
+  populationMaxSteps = Math.max(populationMaxSteps, recording.trajectory.length);
+  
+  // Once we have all recordings, start visualization
+  // Check if we have all recordings by checking the list element
+  const listEl = document.getElementById('evotorch-population-list');
+  if (listEl) {
+    const expectedCount = parseInt(listEl.textContent?.match(/\((\d+) solutions\)/)?.[1] || '0');
+    if (populationRecordings.length >= expectedCount && expectedCount > 0) {
+      startPopulationVisualization(generation);
+    }
+  }
+}
+
+function startPopulationVisualization(generation: number) {
+  // Clear existing pendulums
+  clearPopulationPendulums();
+  
+  // Create a pendulum group for each recording
+  populationRecordings.forEach((rec, index) => {
+    const group = two.makeGroup();
+    group.translation.set(centerX, centerY);
+    
+    // Rod
+    const rod = two.makeLine(0, 0, 0, PENDULUM_LENGTH);
+    rod.stroke = `rgba(74, 158, 255, 0.5)`;
+    rod.linewidth = 2;
+    rod.cap = 'round';
+    group.add(rod);
+    
+    // Bob
+    const bob = two.makeCircle(0, PENDULUM_LENGTH, BOB_RADIUS);
+    bob.fill = `rgba(74, 158, 255, 0.5)`;
+    bob.stroke = `rgba(74, 158, 255, 0.7)`;
+    bob.linewidth = 1;
+    group.add(bob);
+    
+    // Cart
+    const cart = two.makeRoundedRectangle(0, RAIL_Y - centerY, CART_WIDTH, CART_HEIGHT, 5);
+    cart.fill = `rgba(0, 212, 255, 0.3)`;
+    cart.stroke = `rgba(0, 212, 255, 0.5)`;
+    cart.linewidth = 1;
+    group.add(cart);
+    
+    populationPendulums.push({
+      group,
+      recording: rec,
+      rod,
+      bob,
+      cart
+    });
+  });
+  
+  // Reset animation
+  populationCurrentStep = 0;
+  isPlayingPopulation = true;
+  
+  // Update UI
+  const listEl = document.getElementById('evotorch-population-list');
+  if (listEl) {
+    listEl.innerHTML = `
+      <div style="color: #4a9eff; font-weight: bold; margin-bottom: 8px;">
+        Generation ${generation} - ${populationRecordings.length} solutions
+      </div>
+      <div style="margin-bottom: 8px;">
+        <button id="btn-play-population" style="padding: 4px 8px; margin-right: 4px; background: #4a9eff; border: none; color: white; cursor: pointer;">Play</button>
+        <button id="btn-pause-population" style="padding: 4px 8px; margin-right: 4px; background: #666; border: none; color: white; cursor: pointer;">Pause</button>
+        <button id="btn-reset-population" style="padding: 4px 8px; background: #666; border: none; color: white; cursor: pointer;">Reset</button>
+      </div>
+      <div style="color: #888; font-size: 12px;">
+        Step: <span id="population-step">0</span> / ${populationMaxSteps}
+      </div>
+    `;
+    
+    // Add button listeners
+    const playBtn = document.getElementById('btn-play-population');
+    const pauseBtn = document.getElementById('btn-pause-population');
+    const resetBtn = document.getElementById('btn-reset-population');
+    
+    if (playBtn) {
+      playBtn.addEventListener('click', () => {
+        isPlayingPopulation = true;
+        animatePopulation();
+      });
+    }
+    if (pauseBtn) {
+      pauseBtn.addEventListener('click', () => {
+        isPlayingPopulation = false;
+        if (populationAnimationFrame) {
+          cancelAnimationFrame(populationAnimationFrame);
+          populationAnimationFrame = null;
+        }
+      });
+    }
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        populationCurrentStep = 0;
+        updatePopulationFrame();
+      });
+    }
+  }
+  
+  // Start animation
+  animatePopulation();
+}
+
+function clearPopulationPendulums() {
+  populationPendulums.forEach(p => {
+    two.remove(p.group);
+  });
+  populationPendulums = [];
+}
+
+function animatePopulation() {
+  if (!isPlayingPopulation) return;
+  
+  if (populationCurrentStep < populationMaxSteps) {
+    updatePopulationFrame();
+    populationCurrentStep++;
+    populationAnimationFrame = requestAnimationFrame(() => animatePopulation());
+  } else {
+    isPlayingPopulation = false;
+  }
+}
+
+function updatePopulationFrame() {
+  const stepEl = document.getElementById('population-step');
+  if (stepEl) {
+    stepEl.textContent = populationCurrentStep.toString();
+  }
+  
+  populationPendulums.forEach(pendulum => {
+    const trajectory = pendulum.recording.trajectory;
+    if (populationCurrentStep < trajectory.length) {
+      const step = trajectory[populationCurrentStep];
+      
+      // Update angle
+      const angleRad = step.angle * (Math.PI / 180);
+      pendulum.group.rotation = angleRad;
+      
+      // Update cart position
+      const railHalf = RAIL_WIDTH / 2;
+      const normalizedPos = step.cart_position / 3750; // Approximate rail half
+      const cartX = normalizedPos * railHalf;
+      pendulum.group.translation.x = centerX + cartX;
+    }
+  });
+  
+  two.update();
+}
+
+// Make functions available globally
+(window as any).viewEvotorchGenerationRecordings = viewEvotorchGenerationRecordings;
+(window as any).viewEvotorchPopulationRecording = viewEvotorchPopulationRecording;
 
 function updateSklearnTrainingDisplay(data: any) {
   const episodeEl = document.getElementById('sklearn-episode');
@@ -917,6 +1153,19 @@ function connect() {
             sendMode('evotorch_balance');
           } else {
             showUploadStatus(`Preview failed: ${data.message}`, 'error');
+          }
+        }
+        
+        if (data.type === 'EVOTORCH_POPULATION_RECORDS') {
+          // Reset recordings when starting a new generation
+          populationRecordings = [];
+          populationMaxSteps = 0;
+          updateEvotorchPopulationList(data.records, data.generation);
+        }
+        
+        if (data.type === 'EVOTORCH_SOLUTION_RECORDING') {
+          if (data.recording) {
+            addPopulationRecording(data.recording, data.generation, data.solution_id);
           }
         }
         

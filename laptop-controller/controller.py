@@ -1101,6 +1101,111 @@ async def send_evotorch_generations(websocket):
             "error": str(e)
         }))
 
+async def send_evotorch_population_records(websocket, generation: int):
+    """Send population recordings for a specific generation and automatically send all recordings"""
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'evotorch_checkpoints')
+    records_dir = os.path.join(checkpoint_dir, f'generation_{generation}_records')
+    
+    try:
+        if not os.path.exists(records_dir):
+            await websocket.send(json.dumps({
+                "type": "EVOTORCH_POPULATION_RECORDS",
+                "generation": generation,
+                "records": {},
+                "error": f"No records found for generation {generation}"
+            }))
+            return
+        
+        # Load all solution recordings
+        records = {}
+        solution_files = []
+        for filename in os.listdir(records_dir):
+            if filename.startswith('solution_') and filename.endswith('.json'):
+                solution_id = int(filename.replace('solution_', '').replace('.json', ''))
+                record_path = os.path.join(records_dir, filename)
+                solution_files.append((solution_id, record_path))
+                try:
+                    with open(record_path, 'r') as f:
+                        record_data = json.load(f)
+                    records[solution_id] = {
+                        'solution_id': solution_id,
+                        'fitness': record_data.get('fitness', 0),
+                        'trajectory_length': len(record_data.get('trajectory', [])),
+                        'generation': generation
+                    }
+                except Exception as e:
+                    print(f"Error loading record {filename}: {e}", flush=True)
+        
+        # Send the records list first
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_POPULATION_RECORDS",
+            "generation": generation,
+            "records": records
+        }))
+        
+        # Automatically send all recordings
+        for solution_id, record_path in sorted(solution_files):
+            try:
+                with open(record_path, 'r') as f:
+                    recording_data = json.load(f)
+                await websocket.send(json.dumps({
+                    "type": "EVOTORCH_SOLUTION_RECORDING",
+                    "generation": generation,
+                    "solution_id": solution_id,
+                    "recording": recording_data
+                }))
+            except Exception as e:
+                print(f"Error sending recording for solution {solution_id}: {e}", flush=True)
+        
+    except Exception as e:
+        print(f"Error sending population records: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_POPULATION_RECORDS",
+            "generation": generation,
+            "records": {},
+            "error": str(e)
+        }))
+
+async def send_evotorch_solution_recording(websocket, generation: int, solution_id: int):
+    """Send a specific solution's recording for replay"""
+    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'evotorch_checkpoints')
+    records_dir = os.path.join(checkpoint_dir, f'generation_{generation}_records')
+    record_file = os.path.join(records_dir, f'solution_{solution_id}.json')
+    
+    try:
+        if not os.path.exists(record_file):
+            await websocket.send(json.dumps({
+                "type": "EVOTORCH_SOLUTION_RECORDING",
+                "generation": generation,
+                "solution_id": solution_id,
+                "recording": None,
+                "error": f"Recording not found for generation {generation}, solution {solution_id}"
+            }))
+            return
+        
+        with open(record_file, 'r') as f:
+            recording_data = json.load(f)
+        
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_SOLUTION_RECORDING",
+            "generation": generation,
+            "solution_id": solution_id,
+            "recording": recording_data
+        }))
+    except Exception as e:
+        print(f"Error sending solution recording: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        await websocket.send(json.dumps({
+            "type": "EVOTORCH_SOLUTION_RECORDING",
+            "generation": generation,
+            "solution_id": solution_id,
+            "recording": None,
+            "error": str(e)
+        }))
+
 async def preview_evotorch_generation(websocket, generation: int):
     """Load and preview a specific generation's model"""
     global evotorch_model
@@ -1405,6 +1510,17 @@ async def handle_command(message: str, websocket=None):
             # Load and preview a specific generation
             generation = cmd.get('generation')
             await preview_evotorch_generation(websocket, generation)
+        
+        elif cmd_type == "GET_EVOTORCH_POPULATION_RECORDS":
+            # Get population recordings for a generation
+            generation = cmd.get('generation')
+            await send_evotorch_population_records(websocket, generation)
+        
+        elif cmd_type == "GET_EVOTORCH_SOLUTION_RECORDING":
+            # Get a specific solution's recording
+            generation = cmd.get('generation')
+            solution_id = cmd.get('solution_id')
+            await send_evotorch_solution_recording(websocket, generation, solution_id)
         
         elif cmd_type == "GET_NEAT_CONFIG":
             # Get NEAT config for a specific trainer

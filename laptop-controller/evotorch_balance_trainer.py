@@ -181,9 +181,158 @@ def compute_reward(state, angle_rad, angular_velocity, cart_position, cart_veloc
     return reward
 
 
+def evaluate_policy_with_recording(policy_params, generation_num=0):
+    """
+    Evaluate a policy by running an episode and returning total reward and trajectory.
+    
+    Args:
+        policy_params: Flattened policy parameters (1D array or numpy array)
+        generation_num: Current generation number (for progressive physics)
+    
+    Returns:
+        (total_reward, trajectory) where trajectory is a list of state dicts
+    """
+    trajectory = []
+    
+    try:
+        # Convert to numpy array if needed
+        if isinstance(policy_params, torch.Tensor):
+            policy_params = policy_params.cpu().numpy()
+        elif not isinstance(policy_params, np.ndarray):
+            policy_params = np.array(policy_params)
+        
+        # Get progressive physics values
+        gravity, damping = get_progressive_physics(generation_num)
+        
+        # Create simulator config with progressive values
+        sim_config = SimulatorConfig(
+            rail_length_steps=7500,
+            cart_mass=0.5,
+            motor_accel=500000,
+            pendulum_length=0.3,
+            pendulum_mass=0.1,
+            gravity=gravity,
+            damping=damping,
+        )
+        sim = PendulumSimulator(sim_config, start_background_thread=False)
+        
+        # Create policy network
+        policy = BalancePolicy()
+        
+        # Set policy parameters
+        param_idx = 0
+        with torch.no_grad():
+            for param in policy.parameters():
+                param_size = param.numel()
+                if param_idx + param_size > len(policy_params):
+                    raise ValueError(f"Not enough parameters: need {param_idx + param_size}, got {len(policy_params)}")
+                param.data = torch.tensor(
+                    policy_params[param_idx:param_idx + param_size],
+                    dtype=torch.float32
+                ).reshape(param.shape)
+                param_idx += param_size
+        
+        # Start pendulum at 180° (upright) with small perturbation
+        perturbation = random.uniform(-10, 10)
+        # Start with initial cart velocity to prevent "no action" from being a good strategy
+        initial_cart_velocity = random.uniform(-MAX_SPEED * 0.3, MAX_SPEED * 0.3)
+        sim.set_state(
+            cart_position=0.0,
+            cart_velocity=initial_cart_velocity,
+            pendulum_angle=math.radians(180 + perturbation),
+            pendulum_velocity=random.uniform(-0.5, 0.5)
+        )
+        
+        # Get rail limits
+        state = sim.get_state()
+        rail_length = state['limit_right_pos'] - state['limit_left_pos']
+        
+        total_reward = 0.0
+        
+        for step in range(SIMULATION_STEPS):
+            state = sim.get_state()
+            angle_rad = state['pendulum_angle']  # Already in radians
+            
+            # Record state for trajectory
+            trajectory.append({
+                'step': step,
+                'angle': math.degrees(angle_rad),
+                'angular_velocity': state['pendulum_velocity'],
+                'cart_position': state['cart_position'],
+                'cart_velocity': state['cart_velocity'],
+                'time': step * EVAL_DT
+            })
+            
+            # Prepare state vector using sin(θ) and cos(θ) to prevent angle wrap discontinuity
+            state_vec = torch.tensor([
+                math.sin(angle_rad),
+                math.cos(angle_rad),
+                state['pendulum_velocity'] / 1000.0,
+                state['cart_position'] / (rail_length / 2) if rail_length > 0 else 0,
+                state['cart_velocity'] / MAX_SPEED
+            ], dtype=torch.float32)
+            
+            # Get action from policy
+            with torch.no_grad():
+                action = policy(state_vec).item()
+            
+            # Convert action to acceleration
+            max_accel = sim_config.motor_accel
+            acceleration = action * max_accel
+            
+            # Record action
+            trajectory[-1]['action'] = action
+            trajectory[-1]['acceleration'] = acceleration
+            
+            # Apply action
+            sim.set_target_acceleration(acceleration)
+            sim.step(EVAL_DT)
+            
+            # Get next state
+            next_state = sim.get_state()
+            next_angle_rad = next_state['pendulum_angle']
+            
+            # Compute reward
+            reward = compute_reward(
+                next_state,
+                next_angle_rad,
+                next_state['pendulum_velocity'],
+                next_state['cart_position'],
+                next_state['cart_velocity'],
+                acceleration,
+                rail_length,
+                max_accel
+            )
+            total_reward += reward
+            
+            # Record reward
+            trajectory[-1]['reward'] = reward
+            
+            # Check if done: |θ - π| > 20° or |x| > rail_limit
+            angle_from_up_rad = abs(next_angle_rad - math.pi)
+            cart_pos_normalized = abs(next_state['cart_position'] / (rail_length / 2)) if rail_length > 0 else 0
+            done = (next_state['limit_left'] or next_state['limit_right'] or 
+                    angle_from_up_rad > math.radians(20) or
+                    cart_pos_normalized > 1.0)
+            
+            if done:
+                trajectory[-1]['done'] = True
+                break
+        
+        sim.close()
+        return total_reward, trajectory
+    except Exception as e:
+        # If anything goes wrong, return a very low fitness
+        print(f"Error in evaluate_policy_with_recording: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return -1000.0, []
+
+
 def evaluate_policy(policy_params, generation_num=0):
     """
     Evaluate a policy by running an episode and returning total reward.
+    Uses evaluate_policy_with_recording but discards trajectory for backward compatibility.
     
     Args:
         policy_params: Flattened policy parameters (1D array or numpy array)
@@ -192,6 +341,8 @@ def evaluate_policy(policy_params, generation_num=0):
     Returns:
         Total reward for the episode
     """
+    reward, _ = evaluate_policy_with_recording(policy_params, generation_num)
+    return reward
     try:
         # Convert to numpy array if needed
         if isinstance(policy_params, torch.Tensor):
@@ -401,13 +552,17 @@ def train():
                 batch_size = batch_values.shape[0]
                 results = []
                 
+                # Record evaluation data for replay
+                generation_records_dir = os.path.join(CHECKPOINT_DIR, f'generation_{self.generation_num + 1}_records')
+                os.makedirs(generation_records_dir, exist_ok=True)
+                
                 for i in range(batch_size):
                     try:
                         # Get parameters for this solution
                         params = batch_values[i]
                         
-                        # Evaluate the policy
-                        reward = evaluate_policy(params, self.generation_num)
+                        # Evaluate the policy and record the trajectory
+                        reward, trajectory = evaluate_policy_with_recording(params, self.generation_num)
                         
                         # Ensure reward is a valid finite float
                         if reward is None:
@@ -418,6 +573,17 @@ def train():
                             reward = -1000.0
                         
                         results.append(float(reward))
+                        
+                        # Save trajectory for replay
+                        if trajectory:
+                            record_file = os.path.join(generation_records_dir, f'solution_{i}.json')
+                            with open(record_file, 'w') as f:
+                                json.dump({
+                                    'solution_id': i,
+                                    'fitness': reward,
+                                    'trajectory': trajectory,
+                                    'generation': self.generation_num + 1
+                                }, f, indent=2)
                     except Exception as e:
                         # If evaluation fails, give a very low fitness
                         print(f"Warning: Evaluation failed for solution {i}: {e}", flush=True)

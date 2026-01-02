@@ -19,6 +19,7 @@ sklearn_rl_scaler.pkl
 laptop-controller/evotorch_checkpoints/
 laptop-controller/evotorch_generation_history.json
 laptop-controller/evotorch_balance_model.pkl
+laptop-controller/evotorch_checkpoints/*_records/
 
 # IDE
 .vscode/
