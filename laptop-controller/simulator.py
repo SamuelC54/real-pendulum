@@ -7,7 +7,7 @@ Simulates the physical system:
 - Limit switches at both ends
 
 Physics model:
-- Cart: driven by velocity commands, has inertia
+- Cart: driven by acceleration commands only
 - Pendulum: gravity, damping, coupling to cart acceleration
 """
 
@@ -55,9 +55,7 @@ class PendulumSimulator:
         self.cart_position: float = 0.0          # Current position (steps)
         self.cart_velocity: float = 0.0          # Current velocity (steps/s)
         self.cart_acceleration: float = 0.0      # Current acceleration (steps/s²)
-        self.target_velocity: float = 0.0        # Commanded velocity (steps/s) - for backward compatibility
         self.target_acceleration: float = 0.0    # Commanded acceleration (steps/s²)
-        self.use_acceleration_command: bool = False  # Whether to use acceleration or velocity command
         
         # Pendulum state (0° = DOWN/stable, 180° = UP/inverted)
         # Start at 90° (horizontal) so it falls to 0° (down)
@@ -85,7 +83,7 @@ class PendulumSimulator:
             self._physics_thread = threading.Thread(target=self._physics_loop, daemon=True)
             self._physics_thread.start()
             # Queue initial ready message
-            self._queue_output("VELOCITY_MODE_READY\n")
+            self._queue_output("ACCELERATION_MODE_READY\n")
             print("=== SIMULATOR MODE ===")
             print(f"Rail: {self.config.rail_length_steps} steps")
             print(f"Pendulum: {self.config.pendulum_length}m, {self.config.pendulum_mass}kg")
@@ -115,34 +113,19 @@ class PendulumSimulator:
         # Clamp dt to prevent instability
         dt = min(dt, 0.01)
         
-        # --- Cart dynamics ---
-        old_cart_velocity = self.cart_velocity
+        # --- Cart dynamics (acceleration-only control) ---
+        # Clamp acceleration to motor limits
+        target_accel = max(-self.config.motor_accel, min(self.config.motor_accel, self.target_acceleration))
         
-        if self.use_acceleration_command:
-            # Direct acceleration command mode
-            # Clamp acceleration to motor limits
-            target_accel = max(-self.config.motor_accel, min(self.config.motor_accel, self.target_acceleration))
-            # Update velocity based on acceleration
-            self.cart_velocity += target_accel * dt
-            # Clamp velocity to max speed
-            max_speed = 50000  # Maximum cart speed (steps/s)
-            self.cart_velocity = max(-max_speed, min(max_speed, self.cart_velocity))
-            cart_accel = target_accel
-        else:
-            # Velocity command mode (backward compatibility)
-            # Accelerate towards target velocity
-            velocity_error = self.target_velocity - self.cart_velocity
-            max_accel_change = self.config.motor_accel * dt
-            
-            if abs(velocity_error) < max_accel_change:
-                self.cart_velocity = self.target_velocity
-                cart_accel = 0.0
-            else:
-                cart_accel = math.copysign(max_accel_change, velocity_error) / dt
-                self.cart_velocity += cart_accel * dt
+        # Update velocity based on acceleration
+        self.cart_velocity += target_accel * dt
+        
+        # Clamp velocity to max speed
+        max_speed = 50000  # Maximum cart speed (steps/s)
+        self.cart_velocity = max(-max_speed, min(max_speed, self.cart_velocity))
         
         # Store actual cart acceleration (for pendulum coupling)
-        self.cart_acceleration = cart_accel
+        self.cart_acceleration = target_accel
         
         # Update cart position
         old_position = self.cart_position
@@ -156,28 +139,24 @@ class PendulumSimulator:
             self.cart_position = self.limit_left_pos
             if self.cart_velocity < 0:
                 self.cart_velocity = 0
-                if self.target_velocity < 0:
-                    self.target_velocity = 0
-                # Stop acceleration if trying to move left
-                if self.use_acceleration_command and self.target_acceleration < 0:
-                    self.target_acceleration = 0
+            # Stop acceleration if trying to move left
+            if self.target_acceleration < 0:
+                self.target_acceleration = 0
         
         if limit_right:
             self.cart_position = self.limit_right_pos
             if self.cart_velocity > 0:
                 self.cart_velocity = 0
-                if self.target_velocity > 0:
-                    self.target_velocity = 0
-                # Stop acceleration if trying to move right
-                if self.use_acceleration_command and self.target_acceleration > 0:
-                    self.target_acceleration = 0
+            # Stop acceleration if trying to move right
+            if self.target_acceleration > 0:
+                self.target_acceleration = 0
         
         # --- Pendulum dynamics ---
         # Convert cart acceleration from steps/s² to m/s²
         # For belt drive: ~80000 steps/meter typical
         # Lower value = stronger coupling (pendulum responds more to cart movement)
         steps_per_meter = 20000  # Reduced for stronger pendulum response
-        cart_accel_ms2 = cart_accel / steps_per_meter
+        cart_accel_ms2 = target_accel / steps_per_meter
         
         # Pendulum equation of motion:
         # θ'' = -(g/L) * sin(θ) + (a_cart/L) * cos(θ) - c * θ'
@@ -244,16 +223,10 @@ class PendulumSimulator:
         if not cmd:
             return
         
-        if cmd.startswith('V'):
-            # Velocity command
-            try:
-                self.target_velocity = float(cmd[1:])
-            except ValueError:
-                pass
-        
-        elif cmd == 'S':
-            # Stop
-            self.target_velocity = 0
+        if cmd == 'S':
+            # Stop immediately (set both acceleration and velocity to zero)
+            self.target_acceleration = 0.0
+            self.cart_velocity = 0.0
         
         elif cmd == 'Z':
             # Zero position
@@ -262,6 +235,8 @@ class PendulumSimulator:
             self.limit_right_pos -= self.cart_position
             self.cart_position = 0
             self._queue_output("ZEROED\n")
+        
+        # Note: Velocity commands ('V') are no longer supported - use acceleration only
     
     # --- Serial-like interface ---
     
@@ -388,17 +363,16 @@ class PendulumSimulator:
         with self._lock:
             self._update_physics(dt)
     
-    def set_target_velocity(self, velocity: float):
-        """Set target velocity for the cart"""
-        with self._lock:
-            self.target_velocity = velocity
-            self.use_acceleration_command = False
-    
     def set_target_acceleration(self, acceleration: float):
-        """Set target acceleration for the cart (steps/s²)"""
+        """Set target acceleration for the cart (steps/s²) - acceleration-only control"""
         with self._lock:
             self.target_acceleration = acceleration
-            self.use_acceleration_command = True
+    
+    def stop(self):
+        """Immediately stop the cart (set both velocity and acceleration to zero)"""
+        with self._lock:
+            self.target_acceleration = 0.0
+            self.cart_velocity = 0.0
     
     def close(self):
         """Stop the simulator"""

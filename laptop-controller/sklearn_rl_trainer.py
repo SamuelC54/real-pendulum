@@ -13,6 +13,7 @@ Inputs (5):
 
 Output (1):
   - Cart acceleration command (-1 to 1, scaled to max acceleration)
+  - Controller uses acceleration-only control (no velocity commands)
 
 Usage:
   python sklearn_rl_trainer.py              # Train new network
@@ -322,14 +323,15 @@ def train_episode(agent, episode_num):
             state['cart_velocity'] / MAX_SPEED
         ]
         
-        # Get action
+        # Get action (output is normalized acceleration command in range [-1, 1])
         action = agent.get_action(state_vec, training=True)
         
-        # Convert action to acceleration
+        # Convert normalized action to actual acceleration
+        # Controller uses acceleration-only control (no velocity commands)
         max_accel = sim_config.motor_accel
         acceleration = action * max_accel
         
-        # Apply action
+        # Apply acceleration command directly to motor
         sim.set_target_acceleration(acceleration)
         sim.step(EVAL_DT)
         
@@ -497,14 +499,15 @@ def test():
             state['cart_velocity'] / MAX_SPEED
         ]
         
-        # Get action (no exploration during test)
+        # Get action (output is normalized acceleration command in range [-1, 1])
+        # Controller uses acceleration-only control (no velocity commands)
         action = agent.get_action(state_vec, training=False)
         
-        # Convert to acceleration
+        # Convert normalized action to actual acceleration
         max_accel = sim_config.motor_accel
         acceleration = action * max_accel
         
-        # Apply action
+        # Apply acceleration command directly to motor
         sim.set_target_acceleration(acceleration)
         sim.step(EVAL_DT)
         
