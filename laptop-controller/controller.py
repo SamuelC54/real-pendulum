@@ -105,6 +105,12 @@ executor = ThreadPoolExecutor(max_workers=1)  # For serial I/O
 last_angle = 180.0
 last_angle_time = time.perf_counter()
 
+# For acceleration delta tracking (for EvoTorch mode)
+last_acceleration = 0.0
+
+# For acceleration delta tracking (for EvoTorch mode to match training)
+last_acceleration = 0.0
+
 # ============ NEAT NETWORK ============
 best_genome_info = None  # Stores info about the best saved genome
 neat_config_values = None  # Stores current NEAT config values
@@ -443,8 +449,15 @@ def send_velocity(velocity: int):
         except Exception as e:
             print(f"Send error: {e}", flush=True)
 
-def send_acceleration(acceleration: int):
-    """Send acceleration command (for simulator) or convert to velocity (for Arduino)"""
+def send_acceleration(acceleration: int, is_delta: bool = False):
+    """Send acceleration command (for simulator) or convert to velocity (for Arduino)
+    
+    Args:
+        acceleration: Acceleration value (absolute or delta depending on is_delta)
+        is_delta: If True, acceleration is a delta (change) from current, otherwise absolute
+    """
+    global last_acceleration
+    
     # Check limits and stop acceleration if at limit
     if state.limit_left and acceleration < 0:
         acceleration = 0
@@ -453,7 +466,17 @@ def send_acceleration(acceleration: int):
     
     if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
         # Simulator supports acceleration directly
-        serial_port.set_target_acceleration(float(acceleration))
+        if is_delta:
+            # For delta mode: add to current acceleration
+            # Get current acceleration from simulator state if possible, otherwise track it
+            current_accel = last_acceleration
+            target_accel = current_accel + float(acceleration)
+            last_acceleration = target_accel
+            serial_port.set_target_acceleration(target_accel)
+        else:
+            # Absolute mode: set directly (matches training)
+            last_acceleration = float(acceleration)
+            serial_port.set_target_acceleration(float(acceleration))
     elif serial_port and serial_port.is_open:
         # For real hardware, convert acceleration to velocity change
         # Simple integration: v = v_prev + a * dt
@@ -738,7 +761,13 @@ def compute_sklearn_rl() -> int:
     return int(acceleration)
 
 def compute_evotorch_balance() -> int:
-    """Use EvoTorch model to control the pendulum (acceleration-only control)"""
+    """Use EvoTorch model to control the pendulum (acceleration-only control)
+    
+    This matches the training evaluation exactly:
+    - State normalization: sin(θ), cos(θ), angular_vel/1000, cart_pos/(rail_length/2), cart_vel/9000
+    - Max acceleration: 500000 (matches training motor_accel)
+    - Rail length: 7500 steps (matches training)
+    """
     global evotorch_model
     
     # Try to reload if None (in case model was saved after controller started)
@@ -751,31 +780,41 @@ def compute_evotorch_balance() -> int:
             state.mode = "idle"
             return 0
     
-    # Get rail limits for normalization
-    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
+    # Get rail limits for normalization - match training exactly
+    # Training uses: rail_length = limit_right_pos - limit_left_pos, then rail_length / 2
+    # Training rail_length_steps = 7500
+    rail_length = state.limit_right_pos - state.limit_left_pos
+    if rail_length <= 0:
+        # Fallback if limits not set yet
+        rail_length = 7500
+    rail_half = rail_length / 2
     
-    # Prepare inputs using sin(θ) and cos(θ) to match trainer (5 inputs)
+    # Training constants
+    MAX_SPEED = 9000  # Matches evotorch_balance_trainer.py
+    MAX_ACCEL = 500000  # Matches training motor_accel
+    
+    # Prepare inputs using sin(θ) and cos(θ) to match trainer exactly (5 inputs)
     import math
     import torch
     angle_rad = math.radians(state.angle)
     state_vec = torch.tensor([
         math.sin(angle_rad),  # sin(θ)
         math.cos(angle_rad),  # cos(θ)
-        state.angular_velocity / 1000.0,  # Angular velocity (normalized)
-        state.position / rail_half,  # Cart position (normalized)
-        state.velocity / config.neat_max_speed  # Cart velocity (normalized)
+        state.angular_velocity / 1000.0,  # Angular velocity (normalized) - matches training
+        state.position / rail_half if rail_half > 0 else 0,  # Cart position (normalized) - matches training
+        state.velocity / MAX_SPEED  # Cart velocity (normalized) - matches training MAX_SPEED = 9000
     ], dtype=torch.float32)
     
     # Get action from model
     with torch.no_grad():
         action = evotorch_model(state_vec).item()
     
-    # Clip to [-1, 1] range
+    # Clip to [-1, 1] range (tanh already outputs in this range, but ensure it)
     action = max(-1.0, min(1.0, action))
     
-    # Convert to acceleration
-    max_accel = config.manual_accel
-    acceleration = action * max_accel
+    # Convert to acceleration - use training's max acceleration
+    acceleration = action * MAX_ACCEL
+    
     
     # Respect limits
     if state.limit_left and acceleration < 0:
@@ -1077,6 +1116,34 @@ async def update_neat_config(cmd: dict):
         
     except Exception as e:
         print(f"Error updating NEAT config: {e}", flush=True)
+
+async def update_evotorch_config(cmd: dict):
+    """Update EvoTorch training configuration in JSON file"""
+    population_size = cmd.get('population_size', 50)
+    max_speed = cmd.get('max_speed', 9000)
+    sim_steps = cmd.get('sim_steps', 5000)
+    generations = cmd.get('generations', 0)  # 0 means indefinite
+    
+    try:
+        # Load existing config
+        config_data = load_training_config()
+        
+        # Update evotorch config
+        config_data['evotorch'] = {
+            "population_size": population_size,
+            "max_speed": max_speed,
+            "sim_steps": sim_steps,
+            "generations": generations
+        }
+        
+        # Save to file
+        save_training_config(config_data)
+        
+        print(f"EvoTorch config updated: population={population_size}, max_speed={max_speed}, sim_steps={sim_steps}, generations={generations}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "EvoTorch config updated!"})
+    except Exception as e:
+        print(f"Error updating EvoTorch config: {e}", flush=True)
+        await broadcast_message({"type": "CONFIG_RESULT", "success": False, "message": str(e)})
 
 async def send_evotorch_generations(websocket):
     """Send generation history to client"""
@@ -1637,6 +1704,13 @@ async def control_loop():
     while True:
         start = time.perf_counter()
         
+        # Update control rate if mode changed (for EvoTorch matching)
+        if state.mode == "evotorch_balance":
+            control_rate = 50  # Match training EVAL_DT = 0.02 (50Hz)
+        else:
+            control_rate = CONTROL_RATE
+        interval = 1.0 / control_rate
+        
         # Read sensor data in thread pool (non-blocking)
         await loop.run_in_executor(executor, read_serial)
         
@@ -1644,9 +1718,9 @@ async def control_loop():
         acceleration = compute_acceleration()
         
         # Send acceleration command in thread pool (non-blocking)
-        # For simulator: uses acceleration directly
-        # For hardware: integrates acceleration to velocity before sending
-        await loop.run_in_executor(executor, send_acceleration, int(acceleration))
+        # Send absolute acceleration (matches training: each step sets absolute value)
+        # Training does: sim.set_target_acceleration(absolute_acceleration), not delta
+        await loop.run_in_executor(executor, send_acceleration, int(acceleration), False)
         
         # Debug: print when acceleration changes significantly
         if abs(acceleration - last_printed_velocity) > 1000:

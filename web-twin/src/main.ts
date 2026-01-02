@@ -817,12 +817,21 @@ function startPopulationVisualization(generation: number) {
     cart.linewidth = 1;
     group.add(cart);
     
+    // Acceleration text (displayed above the pendulum)
+    const accelText = two.makeText('0', 0, -PENDULUM_LENGTH - 40);
+    accelText.fill = '#ff6b6b';
+    accelText.size = 12;
+    accelText.style = 'bold';
+    accelText.alignment = 'center';
+    group.add(accelText);
+    
     populationPendulums.push({
       group,
       recording: rec,
       rod,
       bob,
-      cart
+      cart,
+      accelText
     });
   });
   
@@ -918,6 +927,22 @@ function updatePopulationFrame() {
       const normalizedPos = step.cart_position / 3750; // Approximate rail half
       const cartX = normalizedPos * railHalf;
       pendulum.group.translation.x = centerX + cartX;
+      
+      // Update acceleration display
+      if (pendulum.accelText && step.acceleration !== undefined) {
+        const accelValue = step.acceleration;
+        // Format acceleration (in steps/s², show in thousands for readability)
+        const accelDisplay = (accelValue / 1000).toFixed(0) + 'k';
+        pendulum.accelText.value = accelDisplay;
+        // Color code: red for positive, blue for negative, gray for zero
+        if (accelValue > 1000) {
+          pendulum.accelText.fill = '#ff6b6b'; // Red for positive
+        } else if (accelValue < -1000) {
+          pendulum.accelText.fill = '#4a9eff'; // Blue for negative
+        } else {
+          pendulum.accelText.fill = '#888'; // Gray for near zero
+        }
+      }
     }
   });
   

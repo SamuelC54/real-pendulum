@@ -63,7 +63,7 @@ OUTPUT_SIZE = 1
 NUM_HIDDEN_LAYERS = 2
 
 # Progressive training parameters
-PROGRESSIVE_TRAINING_GENERATIONS = 1000  # Generations to gradually increase gravity
+PROGRESSIVE_TRAINING_GENERATIONS = 100  # Generations to gradually increase gravity
 INITIAL_GRAVITY = 2.0  # Start with lower gravity (m/s²)
 FINAL_GRAVITY = 9.81  # Final gravity (m/s²)
 INITIAL_DAMPING = 0.5  # Start with higher damping
