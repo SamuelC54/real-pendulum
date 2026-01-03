@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useAtomValue } from 'jotai'
 import { getDefaultStore } from 'jotai'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from 'recharts'
 import {
   trainingActiveAtom,
   trainingStatsAtom,
@@ -12,6 +11,7 @@ import {
   evotorchConfigAtom,
   websocketAtom,
 } from '../store/atoms'
+import FitnessChart from './FitnessChart'
 import { useSendCommand } from '../store/hooks'
 import {
   setTrainingActive,
@@ -24,7 +24,6 @@ import {
 export default function TrainingPanel() {
   const trainingActive = useAtomValue(trainingActiveAtom)
   const stats = useAtomValue(trainingStatsAtom)
-  const fitnessHistory = useAtomValue(fitnessHistoryAtom)
   const generations = useAtomValue(generationsAtom)
   const populationRecords = useAtomValue(populationRecordsAtom)
   const viewingGeneration = useAtomValue(viewingGenerationAtom)
@@ -139,12 +138,6 @@ export default function TrainingPanel() {
   return (
     <div className="w-[280px] bg-bg-panel border-r border-purple-500/20 p-3 flex flex-col gap-2 overflow-y-auto">
       <h2 className="text-base text-neat-purple mb-1">🧬 Training</h2>
-      
-      <div className="flex gap-1 mb-2">
-        <button className="flex-1 px-2 py-1.5 border border-purple-500/30 bg-purple-500/10 text-purple-500/70 rounded text-xs uppercase tracking-wide">
-          🧬 EvoTorch
-        </button>
-      </div>
 
       <div className="flex gap-1.5">
         <button
@@ -191,55 +184,7 @@ export default function TrainingPanel() {
           </div>
         </div>
 
-        <div className="bg-black/30 rounded p-2 mb-2">
-          <div className="w-full" style={{ height: '120px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart 
-                data={fitnessHistory.length > 0 ? fitnessHistory : [{ generation: 0, best: 0, current: 0 }]}
-                margin={{ top: 5, right: 5, bottom: 5, left: 5 }}
-                syncId="fitness-chart"
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
-                <XAxis 
-                  dataKey="generation" 
-                  stroke="#4a9eff"
-                  style={{ fontSize: '10px' }}
-                  tick={{ fill: '#4a9eff' }}
-                />
-                <YAxis 
-                  stroke="#4a9eff"
-                  style={{ fontSize: '10px' }}
-                  tick={{ fill: '#4a9eff' }}
-                  width={40}
-                />
-                <Legend 
-                  wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }}
-                  iconType="line"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="best" 
-                  stroke="#4a9eff" 
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                  name="Best Fitness"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="current" 
-                  stroke="#ff6b35" 
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                  name="Current Fitness"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <FitnessChart />
 
         <h3 className="text-xs text-purple-500/80 mt-2 mb-1">Generation History</h3>
         <div className="max-h-[200px] overflow-y-auto border border-gray-700 p-2 mb-3 bg-[#1a1a1a]">
