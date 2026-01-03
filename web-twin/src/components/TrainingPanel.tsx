@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { getDefaultStore } from 'jotai'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, ResponsiveContainer } from 'recharts'
 import {
   trainingActiveAtom,
   trainingStatsAtom,
+  fitnessHistoryAtom,
   generationsAtom,
   populationRecordsAtom,
   viewingGenerationAtom,
@@ -17,12 +19,12 @@ import {
   setGenerations,
   setPopulationRecords,
   setViewingGeneration,
-  setEvotorchConfig,
 } from '../store/actions'
 
 export default function TrainingPanel() {
   const trainingActive = useAtomValue(trainingActiveAtom)
   const stats = useAtomValue(trainingStatsAtom)
+  const fitnessHistory = useAtomValue(fitnessHistoryAtom)
   const generations = useAtomValue(generationsAtom)
   const populationRecords = useAtomValue(populationRecordsAtom)
   const viewingGeneration = useAtomValue(viewingGenerationAtom)
@@ -30,15 +32,7 @@ export default function TrainingPanel() {
   const ws = useAtomValue(websocketAtom)
   const sendCommand = useSendCommand()
   
-  const setTrainingActiveState = useSetAtom(trainingActiveAtom)
-  const setStatsState = useSetAtom(trainingStatsAtom)
-  const setGenerationsState = useSetAtom(generationsAtom)
-  const setPopulationRecordsState = useSetAtom(populationRecordsAtom)
-  const setViewingGenerationState = useSetAtom(viewingGenerationAtom)
-  const setEvotorchConfigState = useSetAtom(evotorchConfigAtom)
-  
   const store = getDefaultStore()
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewGenerationInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -49,7 +43,22 @@ export default function TrainingPanel() {
       
       if (data.type === 'TRAINING') {
         updateTrainingStats(data, store.set)
-        updateFitnessCanvas(data)
+        // Update fitness history
+        const currentHistory = store.get(fitnessHistoryAtom)
+        const newEntry = {
+          generation: data.generation || 0,
+          best: data.best_fitness || 0,
+          current: data.current_fitness || 0,
+        }
+        // Add new entry or update if generation already exists
+        const existingIndex = currentHistory.findIndex((e: any) => e.generation === newEntry.generation)
+        if (existingIndex >= 0) {
+          const updated = [...currentHistory]
+          updated[existingIndex] = newEntry
+          store.set(fitnessHistoryAtom, updated)
+        } else {
+          store.set(fitnessHistoryAtom, [...currentHistory, newEntry])
+        }
       } else if (data.type === 'TRAINING_STARTED') {
         setTrainingActive(true, store.set)
       } else if (data.type === 'TRAINING_STOPPED') {
@@ -93,27 +102,6 @@ export default function TrainingPanel() {
       ws.removeEventListener('message', handleMessage)
     }
   }, [ws, sendCommand, store])
-
-  const updateFitnessCanvas = (data: TrainingStats) => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const w = canvas.width
-    const h = canvas.height
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
-    ctx.fillRect(0, 0, w, h)
-
-    ctx.strokeStyle = '#4a9eff'
-    ctx.lineWidth = 2
-    ctx.font = '10px monospace'
-    ctx.fillStyle = '#4a9eff'
-    ctx.fillText(`Best: ${data.best_fitness?.toFixed(1) || '0'}`, 2, 12)
-    ctx.fillText(`Current: ${data.current_fitness?.toFixed(1) || '0'}`, 2, 24)
-  }
 
   const handleStartTraining = () => {
     sendCommand({ type: 'START_EVOTORCH_TRAINING' })
@@ -203,8 +191,54 @@ export default function TrainingPanel() {
           </div>
         </div>
 
-        <div className="bg-black/30 rounded p-1.5 mb-2">
-          <canvas ref={canvasRef} width={280} height={80} className="w-full h-[70px]" />
+        <div className="bg-black/30 rounded p-2 mb-2">
+          <div className="w-full" style={{ height: '120px' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart 
+                data={fitnessHistory.length > 0 ? fitnessHistory : [{ generation: 0, best: 0, current: 0 }]}
+                margin={{ top: 5, right: 5, bottom: 5, left: 5 }}
+                syncId="fitness-chart"
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
+                <XAxis 
+                  dataKey="generation" 
+                  stroke="#4a9eff"
+                  style={{ fontSize: '10px' }}
+                  tick={{ fill: '#4a9eff' }}
+                />
+                <YAxis 
+                  stroke="#4a9eff"
+                  style={{ fontSize: '10px' }}
+                  tick={{ fill: '#4a9eff' }}
+                  width={40}
+                />
+                <Legend 
+                  wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }}
+                  iconType="line"
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="best" 
+                  stroke="#4a9eff" 
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={false}
+                  name="Best Fitness"
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="current" 
+                  stroke="#ff6b35" 
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={false}
+                  isAnimationActive={false}
+                  name="Current Fitness"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
         <h3 className="text-xs text-purple-500/80 mt-2 mb-1">Generation History</h3>

@@ -42,6 +42,7 @@ export const controlConfigAtom = atom((get) => ({
 // Training state atoms
 export const trainingActiveAtom = atom(false)
 export const trainingStatsAtom = atom<TrainingStats>({})
+export const fitnessHistoryAtom = atom<Array<{ generation: number; best: number; current: number }>>([])
 export const generationsAtom = atom<Record<string, any>>({})
 export const populationRecordsAtom = atom<any[]>([])
 export const viewingGenerationAtom = atom<number | null>(null)
