@@ -507,13 +507,17 @@ def train():
     # Create problem with custom evaluation
     class BalanceProblem(Problem):
         def __init__(self, generation_num=0):
+            # Use multiprocessing for parallelization (set to number of CPU cores)
+            import multiprocessing
+            num_actors = min(multiprocessing.cpu_count(), POPULATION_SIZE)
             super().__init__(
                 objective_sense='max',
                 solution_length=solution_length,
                 initial_bounds=(-1.0, 1.0),
-                num_actors=0  # No parallelization
+                num_actors=num_actors  # Enable parallelization
             )
             self.generation_num = generation_num
+            print(f"Using {num_actors} parallel workers for evaluation")
         
         def _evaluate(self, solution):
             """Evaluate a single solution"""
@@ -552,17 +556,22 @@ def train():
                 batch_size = batch_values.shape[0]
                 results = []
                 
-                # Record evaluation data for replay
+                # Only record trajectories for the best few solutions to reduce I/O overhead
+                # Record top 10% or at least top 5 solutions
+                record_top_n = max(5, batch_size // 10)
+                
+                # Record evaluation data for replay (only for top solutions)
                 generation_records_dir = os.path.join(CHECKPOINT_DIR, f'generation_{self.generation_num + 1}_records')
                 os.makedirs(generation_records_dir, exist_ok=True)
                 
+                # First pass: evaluate all solutions without recording (faster)
                 for i in range(batch_size):
                     try:
                         # Get parameters for this solution
                         params = batch_values[i]
                         
-                        # Evaluate the policy and record the trajectory
-                        reward, trajectory = evaluate_policy_with_recording(params, self.generation_num)
+                        # Use faster evaluation without recording for most solutions
+                        reward = evaluate_policy(params, self.generation_num)
                         
                         # Ensure reward is a valid finite float
                         if reward is None:
@@ -573,21 +582,36 @@ def train():
                             reward = -1000.0
                         
                         results.append(float(reward))
-                        
-                        # Save trajectory for replay
-                        if trajectory:
-                            record_file = os.path.join(generation_records_dir, f'solution_{i}.json')
-                            with open(record_file, 'w') as f:
-                                json.dump({
-                                    'solution_id': i,
-                                    'fitness': reward,
-                                    'trajectory': trajectory,
-                                    'generation': self.generation_num + 1
-                                }, f, indent=2)
                     except Exception as e:
                         # If evaluation fails, give a very low fitness
                         print(f"Warning: Evaluation failed for solution {i}: {e}", flush=True)
                         results.append(-1000.0)
+                
+                # Second pass: record trajectories for top solutions only
+                if batch_size > 0:
+                    # Get indices sorted by fitness (descending)
+                    sorted_indices = sorted(range(batch_size), key=lambda i: results[i], reverse=True)
+                    
+                    # Record top N solutions
+                    for rank, idx in enumerate(sorted_indices[:record_top_n]):
+                        try:
+                            params = batch_values[idx]
+                            # Re-evaluate with recording for top solutions
+                            reward, trajectory = evaluate_policy_with_recording(params, self.generation_num)
+                            
+                            # Save trajectory for replay
+                            if trajectory:
+                                record_file = os.path.join(generation_records_dir, f'solution_{idx}.json')
+                                with open(record_file, 'w') as f:
+                                    json.dump({
+                                        'solution_id': idx,
+                                        'fitness': reward,
+                                        'trajectory': trajectory,
+                                        'generation': self.generation_num + 1,
+                                        'rank': rank + 1
+                                    }, f, indent=2)
+                        except Exception as e:
+                            print(f"Warning: Failed to record trajectory for solution {idx}: {e}", flush=True)
                 
                 # Convert to tensor with shape (batch_size, 1) for single-objective problems
                 evals = torch.tensor(results, dtype=torch.float32, device=self.device)
