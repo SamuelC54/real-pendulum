@@ -41,13 +41,6 @@ try:
 except ImportError:
     PendulumSimulator = None
 
-# NEAT neural network for balance mode
-neat_network = None  # Loaded on startup if available
-
-# Sklearn RL model
-sklearn_rl_model = None
-sklearn_rl_scaler = None
-
 # EvoTorch model
 evotorch_model = None
 
@@ -73,7 +66,7 @@ class PendulumState:
     velocity: int = 0              # current motor velocity
     limit_left: bool = False
     limit_right: bool = False
-    mode: str = "idle"             # idle, manual_left, manual_right, manual_left_accel, manual_right_accel, oscillate, neat_swing_up_only, neat_balance_only, sklearn_rl, homing
+    mode: str = "idle"             # idle, manual_left, manual_right, manual_left_accel, manual_right_accel, oscillate, evotorch_balance, homing
     connected: bool = False
     # Homing state
     homing_phase: int = 0          # 0=not homing, 1=going right, 2=going left, 3=going to center
@@ -91,8 +84,6 @@ class ControlConfig:
     oscillate_speed: int = 3000
     oscillate_period: float = 2.0  # seconds per cycle
     
-    # NEAT balance mode
-    neat_max_speed: int = 100000  # Max speed for NEAT controller
 
 # Global state
 state = PendulumState()
@@ -108,217 +99,30 @@ last_angle_time = time.perf_counter()
 # For acceleration delta tracking (for EvoTorch mode)
 last_acceleration = 0.0
 
-# For acceleration delta tracking (for EvoTorch mode to match training)
-last_acceleration = 0.0
-
-# ============ NEAT NETWORK ============
-best_genome_info = None  # Stores info about the best saved genome
-neat_config_values = None  # Stores current NEAT config values
-balance_network = None  # Separate network for balance-only mode
-balance_genome_info = None  # Info about balance genome
-
-NEAT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
+TRAINING_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'neat_training_config.json')
 
 def load_training_config():
     """Load training config from JSON file"""
     try:
-        with open(NEAT_CONFIG_FILE, 'r') as f:
-            return json.load(f)
+        if os.path.exists(TRAINING_CONFIG_FILE):
+            with open(TRAINING_CONFIG_FILE, 'r') as f:
+                return json.load(f)
     except:
-        # Default config
-        return {
-            "swing_up": {"pop_size": 100, "max_speed": 9000, "sim_steps": 2000},
-            "balance": {"pop_size": 100, "max_speed": 5000, "sim_steps": 5000}
-        }
+        pass
+    # Default config (EvoTorch only)
+    return {
+        "evotorch": {"population_size": 50, "max_speed": 9000, "sim_steps": 5000, "generations": 0}
+    }
 
 def save_training_config(config: dict):
     """Save training config to JSON file"""
     try:
-        with open(NEAT_CONFIG_FILE, 'w') as f:
+        with open(TRAINING_CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
-            f.flush()  # Force immediate write to disk
-            os.fsync(f.fileno())  # Ensure OS writes to disk immediately
+            f.flush()
+            os.fsync(f.fileno())
     except Exception as e:
         print(f"Error saving config: {e}")
-
-def get_neat_config(trainer_type: str = "swing_up"):
-    """Get config for a specific trainer type"""
-    global neat_config_values
-    config = load_training_config()
-    
-    # Map tab names to config keys
-    key = "swing_up" if trainer_type in ["swing-up", "swing_up"] else "balance"
-    trainer_config = config.get(key, {"pop_size": 100, "max_speed": 9000, "sim_steps": 2000})
-    
-    neat_config_values = {
-        "pop_size": trainer_config.get("pop_size", 100),
-        "max_speed": trainer_config.get("max_speed", 9000),
-        "sim_steps": trainer_config.get("sim_steps", 2000)
-    }
-    
-    # Add perturbation parameters for balance trainer
-    if key == "balance":
-        neat_config_values["angle_perturbation"] = trainer_config.get("angle_perturbation", 10)
-        neat_config_values["velocity_perturbation"] = trainer_config.get("velocity_perturbation", 0.5)
-    
-    msg = f"pop={neat_config_values['pop_size']}, max_speed={neat_config_values['max_speed']}, sim_steps={neat_config_values['sim_steps']}"
-    if key == "balance":
-        msg += f", angle_pert={neat_config_values.get('angle_perturbation', 10)}, vel_pert={neat_config_values.get('velocity_perturbation', 0.5)}"
-    print(f"NEAT Config ({key}): {msg}", flush=True)
-    
-    return neat_config_values
-
-def load_neat_network():
-    """Load the trained NEAT network if available"""
-    global neat_network, best_genome_info
-    
-    genome_path = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_config.txt')
-    
-    if not os.path.exists(genome_path):
-        print("NEAT: No trained network found (best_genome.pkl)")
-        best_genome_info = None
-        return False
-    
-    if not os.path.exists(config_path):
-        print("NEAT: Config file not found (neat_swing_up_config.txt)")
-        best_genome_info = None
-        return False
-    
-    try:
-        import neat
-        import pickle
-        
-        # Load NEAT config
-        neat_config = neat.Config(
-            neat.DefaultGenome,
-            neat.DefaultReproduction,
-            neat.DefaultSpeciesSet,
-            neat.DefaultStagnation,
-            config_path
-        )
-        
-        # Load best genome
-        with open(genome_path, 'rb') as f:
-            genome = pickle.load(f)
-        
-        # Create network
-        neat_network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
-        
-        # Extract genome info for display
-        num_nodes = len(genome.nodes)
-        num_connections = len([c for c in genome.connections.values() if c.enabled])
-        num_inputs = len(neat_network.input_nodes)
-        num_outputs = len(neat_network.output_nodes)
-        
-        # Get file modification time
-        import datetime
-        mod_time = os.path.getmtime(genome_path)
-        mod_datetime = datetime.datetime.fromtimestamp(mod_time)
-        
-        best_genome_info = {
-            "fitness": genome.fitness,
-            "nodes": num_nodes,
-            "connections": num_connections,
-            "inputs": num_inputs,
-            "outputs": num_outputs,
-            "saved_at": mod_datetime.strftime("%Y-%m-%d %H:%M")
-        }
-        
-        print(f"NEAT: Loaded trained network (fitness: {genome.fitness:.1f}, nodes: {num_nodes}, conns: {num_connections})")
-        return True
-        
-    except Exception as e:
-        print(f"NEAT: Failed to load network: {e}")
-        best_genome_info = None
-        return False
-
-def load_balance_network():
-    """Load the trained balance-only NEAT network if available"""
-    global balance_network, balance_genome_info
-    
-    genome_path = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
-    config_path = os.path.join(os.path.dirname(__file__), 'neat_balance_config.txt')
-    
-    if not os.path.exists(genome_path):
-        print("NEAT Balance: No trained network found (best_balance_genome.pkl)")
-        balance_genome_info = None
-        return False
-    
-    if not os.path.exists(config_path):
-        print("NEAT Balance: Config file not found (neat_balance_config.txt)")
-        balance_genome_info = None
-        return False
-    
-    try:
-        import neat
-        import pickle
-        
-        # Load NEAT config
-        neat_config = neat.Config(
-            neat.DefaultGenome,
-            neat.DefaultReproduction,
-            neat.DefaultSpeciesSet,
-            neat.DefaultStagnation,
-            config_path
-        )
-        
-        # Load best genome
-        with open(genome_path, 'rb') as f:
-            genome = pickle.load(f)
-        
-        # Create network
-        balance_network = neat.nn.FeedForwardNetwork.create(genome, neat_config)
-        
-        # Extract genome info
-        num_nodes = len(genome.nodes)
-        num_connections = len([c for c in genome.connections.values() if c.enabled])
-        
-        import datetime
-        mod_time = os.path.getmtime(genome_path)
-        mod_datetime = datetime.datetime.fromtimestamp(mod_time)
-        
-        balance_genome_info = {
-            "fitness": genome.fitness,
-            "nodes": num_nodes,
-            "connections": num_connections,
-            "saved_at": mod_datetime.strftime("%Y-%m-%d %H:%M")
-        }
-        
-        print(f"NEAT Balance: Loaded network (fitness: {genome.fitness:.1f})")
-        return True
-        
-    except Exception as e:
-        print(f"NEAT Balance: Failed to load network: {e}")
-        balance_genome_info = None
-        return False
-
-def load_sklearn_rl_model():
-    """Load the sklearn RL model if available"""
-    global sklearn_rl_model, sklearn_rl_scaler
-    
-    model_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_model.pkl')
-    scaler_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_scaler.pkl')
-    
-    if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-        print("Sklearn RL: No trained model found")
-        sklearn_rl_model = None
-        sklearn_rl_scaler = None
-        return False
-    
-    try:
-        import pickle
-        with open(model_path, 'rb') as f:
-            sklearn_rl_model = pickle.load(f)
-        with open(scaler_path, 'rb') as f:
-            sklearn_rl_scaler = pickle.load(f)
-        print("Sklearn RL: Loaded trained model")
-        return True
-    except Exception as e:
-        print(f"Sklearn RL: Failed to load model: {e}")
-        sklearn_rl_model = None
-        sklearn_rl_scaler = None
-        return False
 
 def load_evotorch_model():
     """Load the EvoTorch model if available"""
@@ -395,16 +199,6 @@ def load_evotorch_model():
         evotorch_model = None
         return False
 
-def normalize_angle_for_neat(angle_deg):
-    """Normalize angle so 180° (upright) = 0, range [-1, 1]"""
-    # In our system: 0° = down, 180° = up
-    # We want: 180° = 0 (balanced), 0° or 360° = ±1 (fallen)
-    diff = angle_deg - 180.0
-    if diff > 180:
-        diff -= 360
-    elif diff < -180:
-        diff += 360
-    return diff / 180.0
 
 # ============ SERIAL COMMUNICATION ============
 def connect_serial():
@@ -600,15 +394,6 @@ def compute_acceleration() -> int:
     elif state.mode == "oscillate":
         return compute_oscillate()
     
-    elif state.mode == "neat_swing_up_only":
-        return compute_neat_swing_up_only()
-    
-    elif state.mode == "neat_balance_only":
-        return compute_neat_balance_only()
-    
-    elif state.mode == "sklearn_rl":
-        return compute_sklearn_rl()
-    
     elif state.mode == "evotorch_balance":
         return compute_evotorch_balance()
     
@@ -633,132 +418,6 @@ def compute_oscillate() -> int:
         return 0
     
     return acceleration
-
-def compute_neat_swing_up_only() -> int:
-    """
-    Use trained NEAT neural network to balance the pendulum.
-    
-    Network inputs (4):
-      - Normalized angle from upright (180° = 0, 0° = ±1)
-      - Angular velocity (normalized)
-      - Cart position (normalized)
-      - Cart velocity (normalized)
-    
-    Network output (1):
-      - Cart acceleration (-1 to 1, scaled by max acceleration)
-    """
-    if neat_network is None:
-        print("NEAT network not loaded! Going to idle.")
-        state.mode = "idle"
-        return 0
-    
-    # Get rail limits for normalization
-    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
-    
-    # Prepare inputs for neural network (4 inputs)
-    inputs = [
-        normalize_angle_for_neat(state.angle),           # Angle from upright
-        state.angular_velocity / 500.0,                  # Angular velocity (normalized)
-        state.position / rail_half,                      # Position (normalized)
-        state.velocity / config.neat_max_speed,          # Cart velocity (normalized)
-    ]
-    
-    # Get network output (now interpreted as acceleration)
-    output = neat_network.activate(inputs)
-    max_accel = config.manual_accel
-    acceleration = int(output[0] * max_accel)
-    
-    # Clamp to max acceleration
-    acceleration = max(-max_accel, min(max_accel, acceleration))
-    
-    # Respect limits
-    if state.limit_left and acceleration < 0:
-        acceleration = 0
-    if state.limit_right and acceleration > 0:
-        acceleration = 0
-    
-    return acceleration
-
-def compute_neat_balance_only() -> int:
-    """
-    Use the balance-only NEAT network (trained from upright position).
-    Network outputs acceleration, which we convert to velocity for hardware.
-    """
-    if balance_network is None:
-        print("Balance network not loaded! Going to idle.")
-        state.mode = "idle"
-        return 0
-    
-    # Get rail limits for normalization
-    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
-    
-    # Prepare inputs for neural network (4 inputs) - match trainer normalization
-    inputs = [
-        normalize_angle_for_neat(state.angle),           # Angle from upright
-        state.angular_velocity / 1000.0,                 # Angular velocity (normalized, match trainer)
-        state.position / rail_half,                      # Position (normalized)
-        state.velocity / config.neat_max_speed,          # Cart velocity (normalized)
-    ]
-    
-    # Get network output (acceleration command: -1 to 1)
-    output = balance_network.activate(inputs)
-    
-    # Scale to acceleration (steps/s²)
-    max_accel = config.manual_accel  # Use manual_accel as max acceleration
-    acceleration = output[0] * max_accel
-    acceleration = max(-max_accel, min(max_accel, acceleration))
-    
-    # Respect limits
-    if state.limit_left and acceleration < 0:
-        acceleration = 0
-    if state.limit_right and acceleration > 0:
-        acceleration = 0
-    
-    # Return acceleration (will be handled by send_acceleration)
-    return int(acceleration)
-
-def compute_sklearn_rl() -> int:
-    """Use sklearn RL model to control the pendulum (acceleration-only control)"""
-    if sklearn_rl_model is None or sklearn_rl_scaler is None:
-        print("Sklearn RL model not loaded! Going to idle.")
-        state.mode = "idle"
-        return 0
-    
-    # Get rail limits for normalization
-    rail_half = max(abs(state.limit_left_pos), abs(state.limit_right_pos), 3750)
-    
-    # Prepare inputs using sin(θ) and cos(θ) to match trainer (5 inputs)
-    import math
-    angle_rad = math.radians(state.angle)
-    inputs = [
-        math.sin(angle_rad),  # sin(θ)
-        math.cos(angle_rad),  # cos(θ)
-        state.angular_velocity / 1000.0,  # Angular velocity (normalized)
-        state.position / rail_half,  # Cart position (normalized)
-        state.velocity / config.neat_max_speed  # Cart velocity (normalized)
-    ]
-    
-    # Scale inputs
-    import numpy as np
-    state_scaled = sklearn_rl_scaler.transform([inputs])
-    
-    # Get action from model (predict returns 1D array)
-    q_value = sklearn_rl_model.predict(state_scaled)
-    action = float(q_value.flat[0])  # Extract scalar value
-    action = np.clip(action, -1.0, 1.0)
-    
-    # Convert to acceleration
-    max_accel = config.manual_accel
-    acceleration = action * max_accel
-    
-    # Respect limits
-    if state.limit_left and acceleration < 0:
-        acceleration = 0
-    if state.limit_right and acceleration > 0:
-        acceleration = 0
-    
-    # Return acceleration (will be handled by send_acceleration)
-    return int(acceleration)
 
 def compute_evotorch_balance() -> int:
     """Use EvoTorch model to control the pendulum (acceleration-only control)
@@ -896,87 +555,9 @@ async def do_upload_async():
     finally:
         upload_in_progress = False
 
-# ============ NEAT TRAINING ============
+# ============ TRAINING ============
 training_process = None
-
-async def start_training():
-    """Start NEAT training in background process"""
-    global training_process
-    
-    if training_process and training_process.poll() is None:
-        print("Training already running!")
-        return
-    
-    print("Starting NEAT training...", flush=True)
-    
-    # Clear old checkpoints and status file
-    import shutil
-    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_swing_up_checkpoints')
-    
-    if os.path.exists(checkpoint_dir):
-        shutil.rmtree(checkpoint_dir)
-    if os.path.exists(TRAINING_STATUS_FILE):
-        os.remove(TRAINING_STATUS_FILE)
-    
-    # Start training process (swing-up trainer)
-    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_swing_up_trainer.py')
-    training_process = subprocess.Popen(
-        [sys.executable, trainer_path],
-        cwd=os.path.dirname(__file__)
-    )
-    
-    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "swingup"})
-
-async def start_balance_training():
-    """Start NEAT balance training in background process"""
-    global training_process
-    
-    if training_process and training_process.poll() is None:
-        print("Training already running!")
-        return
-    
-    print("Starting NEAT BALANCE training...", flush=True)
-    
-    # Clear old checkpoints and status file
-    import shutil
-    checkpoint_dir = os.path.join(os.path.dirname(__file__), 'neat_balance_checkpoints')
-    
-    if os.path.exists(checkpoint_dir):
-        shutil.rmtree(checkpoint_dir)
-    if os.path.exists(TRAINING_STATUS_FILE):
-        os.remove(TRAINING_STATUS_FILE)
-    
-    # Start balance training process
-    trainer_path = os.path.join(os.path.dirname(__file__), 'neat_balance_trainer.py')
-    training_process = subprocess.Popen(
-        [sys.executable, trainer_path],
-        cwd=os.path.dirname(__file__)
-    )
-    
-    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "balance"})
-
-async def start_sklearn_training():
-    """Start sklearn RL training in background process"""
-    global training_process
-    
-    if training_process and training_process.poll() is None:
-        print("Training already running!")
-        return
-    
-    print("Starting sklearn RL training...", flush=True)
-    
-    # Clear old status file
-    if os.path.exists(TRAINING_STATUS_FILE):
-        os.remove(TRAINING_STATUS_FILE)
-    
-    # Start sklearn training process
-    trainer_path = os.path.join(os.path.dirname(__file__), 'sklearn_rl_trainer.py')
-    training_process = subprocess.Popen(
-        [sys.executable, trainer_path],
-        cwd=os.path.dirname(__file__)
-    )
-    
-    await broadcast_message({"type": "TRAINING_STARTED", "trainer": "sklearn"})
+TRAINING_STATUS_FILE = os.path.join(os.path.dirname(__file__), 'training_status.json')
 
 async def start_evotorch_training():
     """Start EvoTorch training in background process"""
@@ -1002,7 +583,7 @@ async def start_evotorch_training():
     await broadcast_message({"type": "TRAINING_STARTED", "trainer": "evotorch"})
 
 async def stop_training():
-    """Stop training (works for both NEAT, sklearn, and evotorch)"""
+    """Stop training (works for evotorch)"""
     global training_process, last_training_status
     
     if training_process and training_process.poll() is None:
@@ -1028,94 +609,13 @@ async def stop_training():
             os.remove(stop_flag)
         last_training_status = None
         
-        # Reload models if they exist
-        global neat_network, sklearn_rl_model, evotorch_model
-        load_neat_network()
-        load_balance_network()
-        load_sklearn_rl_model()
-        load_evotorch_model()
+        # Reload EvoTorch model if it exists
+        global evotorch_model
         load_evotorch_model()
         
         await broadcast_message({"type": "TRAINING_STOPPED"})
     else:
         print("No training running")
-
-async def delete_best_genome(trainer_type: str = "swing-up"):
-    """Delete the best genome file for the specified trainer type"""
-    global neat_network, best_genome_info, balance_network, balance_genome_info
-    
-    # Determine which genome file to delete
-    if trainer_type in ["swing-up", "swing_up"]:
-        genome_path = os.path.join(os.path.dirname(__file__), 'best_swing_up_genome.pkl')
-        label = "swing-up"
-    else:
-        genome_path = os.path.join(os.path.dirname(__file__), 'best_balance_genome.pkl')
-        label = "balance"
-    
-    if os.path.exists(genome_path):
-        os.remove(genome_path)
-        
-        # Clear the appropriate network and info
-        if trainer_type in ["swing-up", "swing_up"]:
-            neat_network = None
-            best_genome_info = None
-        else:
-            balance_network = None
-            balance_genome_info = None
-        
-        print(f"Deleted {label} genome: {genome_path}", flush=True)
-        await broadcast_message({"type": "DELETE_RESULT", "success": True, "message": f"{label} genome deleted!", "trainer": trainer_type})
-    else:
-        print(f"No {label} genome to delete", flush=True)
-        await broadcast_message({"type": "DELETE_RESULT", "success": False, "message": f"No {label} genome exists"})
-
-async def update_neat_config(cmd: dict):
-    """Update NEAT training configuration in JSON file"""
-    trainer_type = cmd.get('trainer', 'swing-up')
-    pop_size = cmd.get('pop_size', 100)
-    max_speed = cmd.get('max_speed', 9000)
-    sim_steps = cmd.get('sim_steps', 2000)
-    angle_perturbation = cmd.get('angle_perturbation')
-    velocity_perturbation = cmd.get('velocity_perturbation')
-    
-    # Map tab names to config keys
-    key = "swing_up" if trainer_type in ["swing-up", "swing_up"] else "balance"
-    
-    try:
-        # Load existing config
-        config_data = load_training_config()
-        
-        # Update the specific trainer config
-        trainer_config = {
-            "pop_size": pop_size,
-            "max_speed": max_speed,
-            "sim_steps": sim_steps
-        }
-        
-        # Add perturbation parameters for balance trainer
-        if key == "balance":
-            if angle_perturbation is not None:
-                trainer_config["angle_perturbation"] = angle_perturbation
-            if velocity_perturbation is not None:
-                trainer_config["velocity_perturbation"] = velocity_perturbation
-        
-        config_data[key] = trainer_config
-        
-        # Save to JSON
-        save_training_config(config_data)
-        
-        # Update controller's neat_max_speed if this is the swing-up trainer
-        if key == "swing_up":
-            config.neat_max_speed = max_speed
-        
-        msg = f"{key} config updated: pop={pop_size}, max_speed={max_speed}, steps={sim_steps}"
-        if key == "balance" and (angle_perturbation is not None or velocity_perturbation is not None):
-            msg += f", angle_pert={angle_perturbation or 'unchanged'}, vel_pert={velocity_perturbation or 'unchanged'}"
-        print(f"NEAT config ({key}) updated: {msg}", flush=True)
-        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": f"{key} config updated!"})
-        
-    except Exception as e:
-        print(f"Error updating NEAT config: {e}", flush=True)
 
 async def update_evotorch_config(cmd: dict):
     """Update EvoTorch training configuration in JSON file"""
@@ -1374,40 +874,6 @@ async def preview_evotorch_generation(websocket, generation: int):
             "message": f"Error: {str(e)}"
         }))
 
-async def update_sklearn_config(cmd: dict):
-    """Update sklearn training configuration in JSON file"""
-    episodes = cmd.get('episodes', 1000)
-    max_speed = cmd.get('max_speed', 9000)
-    sim_steps = cmd.get('sim_steps', 5000)
-    
-    try:
-        # Load existing config
-        config_data = load_training_config()
-        
-        # Update sklearn config
-        config_data['sklearn'] = {
-            "episodes": episodes,
-            "max_speed": max_speed,
-            "sim_steps": sim_steps
-        }
-        
-        # Save to file
-        save_training_config(config_data)
-        
-        print(f"Sklearn config updated: episodes={episodes}, max_speed={max_speed}, sim_steps={sim_steps}", flush=True)
-        await broadcast_message({"type": "CONFIG_RESULT", "success": True, "message": "Sklearn config updated!"})
-    except Exception as e:
-        print(f"Error updating sklearn config: {e}", flush=True)
-        await broadcast_message({"type": "CONFIG_RESULT", "success": False, "message": str(e)})
-
-async def send_neat_config(websocket, trainer_type: str):
-    """Send NEAT config for a specific trainer type"""
-    config_data = get_neat_config(trainer_type)
-    await websocket.send(json.dumps({
-        "type": "NEAT_CONFIG_DATA",
-        "trainer": trainer_type,
-        **config_data
-    }))
 
 def upload_arduino_code():
     """Upload Arduino code using arduino-cli (runs in thread)"""
@@ -1485,9 +951,9 @@ async def handle_command(message: str, websocket=None):
         
         if cmd_type == "MODE":
             new_mode = cmd.get("mode", "idle")
-            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "neat_swing_up_only", "neat_balance_only", "sklearn_rl", "evotorch_balance"]:
+            if new_mode in ["idle", "manual_left", "manual_right", "manual_left_accel", "manual_right_accel", "oscillate", "evotorch_balance"]:
                 # Reset pendulum to upright in simulator when entering balance modes
-                if new_mode in ["neat_balance_only", "sklearn_rl", "evotorch_balance"] and SIMULATOR_MODE and serial_port:
+                if new_mode in ["evotorch_balance"] and SIMULATOR_MODE and serial_port:
                     serial_port.set_pendulum_upright()
                     print(f"Simulator: Reset pendulum to upright (180°) for {new_mode}")
                 
@@ -1532,38 +998,13 @@ async def handle_command(message: str, websocket=None):
             # Run upload in background task
             asyncio.create_task(do_upload_async())
         
-        elif cmd_type == "START_TRAINING":
-            # Start NEAT swing-up training in background
-            await start_training()
-        
-        elif cmd_type == "START_BALANCE_TRAINING":
-            # Start NEAT balance training in background
-            await start_balance_training()
-        
-        elif cmd_type == "START_SKLEARN_TRAINING":
-            # Start sklearn RL training in background
-            await start_sklearn_training()
-        
         elif cmd_type == "START_EVOTORCH_TRAINING":
             # Start EvoTorch training in background
             await start_evotorch_training()
         
         elif cmd_type == "STOP_TRAINING":
-            # Stop training (works for both NEAT and sklearn)
+            # Stop training
             await stop_training()
-        
-        elif cmd_type == "DELETE_BEST":
-            # Delete the best genome for the specified trainer type
-            trainer_type = cmd.get('trainer', 'swing-up')
-            await delete_best_genome(trainer_type)
-        
-        elif cmd_type == "NEAT_CONFIG":
-            # Update NEAT config
-            await update_neat_config(cmd)
-        
-        elif cmd_type == "SKLEARN_CONFIG":
-            # Update sklearn config
-            await update_sklearn_config(cmd)
         
         elif cmd_type == "EVOTORCH_CONFIG":
             # Update evotorch config
@@ -1589,10 +1030,6 @@ async def handle_command(message: str, websocket=None):
             solution_id = cmd.get('solution_id')
             await send_evotorch_solution_recording(websocket, generation, solution_id)
         
-        elif cmd_type == "GET_NEAT_CONFIG":
-            # Get NEAT config for a specific trainer
-            trainer_type = cmd.get('trainer', 'swing-up')
-            await send_neat_config(websocket, trainer_type)
     
     except json.JSONDecodeError:
         print(f"Invalid command: {message}")
@@ -1624,9 +1061,6 @@ async def broadcast_state():
         "limit_right_pos": state.limit_right_pos,
         "mode": state.mode,
         "connected": state.connected,
-        "best_genome_swing_up": best_genome_info,
-        "best_genome_balance": balance_genome_info,
-        "neat_config": neat_config_values,
         "config": {
             "manual_speed": config.manual_speed,
             "manual_accel": config.manual_accel,
@@ -1663,9 +1097,6 @@ async def check_training_status():
     if training_process and training_process.poll() is not None:
         # Process finished - reload models in case new ones were saved
         print("Training process finished, reloading models...", flush=True)
-        load_neat_network()
-        load_balance_network()
-        load_sklearn_rl_model()
         load_evotorch_model()
         training_process = None
         await broadcast_message({"type": "TRAINING_STOPPED"})
@@ -1761,12 +1192,8 @@ async def main():
         print(">>> SIMULATOR MODE - No hardware required <<<")
     print("=" * 50, flush=True)
     
-    # Load NEAT networks and config
-    load_neat_network()
-    load_balance_network()
-    load_sklearn_rl_model()
+    # Load EvoTorch model
     load_evotorch_model()
-    get_neat_config()
     
     # Connect to Arduino or simulator
     if not connect_serial():

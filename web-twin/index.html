@@ -8,16 +8,13 @@
   </head>
   <body>
     <div id="app">
-      <!-- Left Panel: NEAT Training -->
+      <!-- Left Panel: Training -->
       <div id="neat-panel">
-        <h2>🧬 NEAT Training</h2>
+        <h2>🧬 Training</h2>
         
         <!-- Tabs -->
         <div class="neat-tabs">
-          <button class="neat-tab active" data-tab="swing-up">🚀 Swing-Up</button>
-          <button class="neat-tab" data-tab="balance">⚖ Balance</button>
-          <button class="neat-tab" data-tab="sklearn">🤖 Sklearn RL</button>
-          <button class="neat-tab" data-tab="evotorch">🧬 EvoTorch</button>
+          <button class="neat-tab active" data-tab="evotorch">🧬 EvoTorch</button>
         </div>
         
         <!-- Training Controls -->
@@ -30,145 +27,8 @@
           </button>
         </div>
         
-        <!-- NEAT Training Content (Swing-Up and Balance) -->
-        <div id="neat-training-content">
-          <div class="training-stats">
-            <div class="stat-row">
-              <span class="stat-label">Generation:</span>
-              <span id="train-generation" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Best Fitness:</span>
-              <span id="train-best-fitness" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Avg Fitness:</span>
-              <span id="train-avg-fitness" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Species:</span>
-              <span id="train-species" class="stat-value">0</span>
-            </div>
-          </div>
-          
-          <div class="fitness-graph">
-            <canvas id="fitness-canvas" width="280" height="80"></canvas>
-          </div>
-          
-          <h3>Config</h3>
-          
-          <div class="config-row">
-            <label>Population</label>
-            <input type="number" id="neat-pop-size" value="100" min="10" max="5000">
-          </div>
-          
-          <div class="config-row">
-            <label>Max Speed</label>
-            <input type="number" id="neat-max-speed" value="9000" min="1000" max="500000" step="1000">
-          </div>
-          
-          <div class="config-row">
-            <label>Sim Steps</label>
-            <input type="number" id="neat-sim-steps" value="2000" min="100" max="10000" step="100">
-          </div>
-          
-          <!-- Balance-specific perturbation parameters -->
-          <div id="balance-perturbation-config" style="display: none;">
-            <div class="config-row">
-              <label>Angle Pert (°)</label>
-              <input type="number" id="neat-angle-perturbation" value="10" min="0" max="90" step="1">
-            </div>
-            <div class="config-row">
-              <label>Vel Pert (rad/s)</label>
-              <input type="number" id="neat-velocity-perturbation" value="0.5" min="0" max="10" step="0.1">
-            </div>
-          </div>
-          
-          <div class="control-row" style="margin-top: 8px;">
-            <button id="btn-apply-neat-config" class="control-btn">
-              Apply Config
-            </button>
-          </div>
-          
-          <h3>Best Genome</h3>
-          
-          <div id="best-genome-info" class="genome-info">
-            <div class="stat-row">
-              <span class="stat-label">Fitness:</span>
-              <span id="genome-fitness" class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Nodes:</span>
-              <span id="genome-nodes" class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Connections:</span>
-              <span id="genome-connections" class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Saved:</span>
-              <span id="genome-saved-at" class="stat-value">-</span>
-            </div>
-          </div>
-          
-          <div class="control-row" style="margin-top: 8px;">
-            <button id="btn-delete-best" class="control-btn delete-btn">
-              🗑️ Delete Best
-            </button>
-          </div>
-        </div>
-        
-        <!-- Sklearn RL Training Content -->
-        <div id="sklearn-training-content" style="display: none;">
-          <div class="training-stats">
-            <div class="stat-row">
-              <span class="stat-label">Episode:</span>
-              <span id="sklearn-episode" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Best Reward:</span>
-              <span id="sklearn-best-reward" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Last Reward:</span>
-              <span id="sklearn-last-reward" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Exploration:</span>
-              <span id="sklearn-exploration" class="stat-value">0.1</span>
-            </div>
-          </div>
-          
-          <div class="fitness-graph">
-            <canvas id="sklearn-reward-canvas" width="280" height="80"></canvas>
-          </div>
-          
-          <h3>Config</h3>
-          
-          <div class="config-row">
-            <label>Episodes</label>
-            <input type="number" id="sklearn-episodes" value="1000" min="100" max="10000" step="100">
-          </div>
-          
-          <div class="config-row">
-            <label>Max Speed</label>
-            <input type="number" id="sklearn-max-speed" value="9000" min="1000" max="500000" step="1000">
-          </div>
-          
-          <div class="config-row">
-            <label>Sim Steps</label>
-            <input type="number" id="sklearn-sim-steps" value="5000" min="100" max="10000" step="100">
-          </div>
-          
-          <div class="control-row" style="margin-top: 8px;">
-            <button id="btn-apply-sklearn-config" class="control-btn">
-              Apply Config
-            </button>
-          </div>
-        </div>
-        
         <!-- EvoTorch Training Content -->
-        <div id="evotorch-training-content" style="display: none;">
+        <div id="evotorch-training-content">
           <div class="training-stats">
             <div class="stat-row">
               <span class="stat-label">Generation:</span>
@@ -304,15 +164,6 @@
           </div>
           
           <div class="control-row">
-            <button id="btn-neat-swingup" class="control-btn toggle-btn neat-btn" data-mode="neat_swing_up_only">
-              🚀 Swing Up
-            </button>
-            <button id="btn-neat-balance-run" class="control-btn toggle-btn balance-btn" data-mode="neat_balance_only">
-              ⚖ Balance
-            </button>
-            <button id="btn-sklearn-rl" class="control-btn toggle-btn neat-btn" data-mode="sklearn_rl">
-              🤖 Sklearn RL
-            </button>
             <button id="btn-evotorch-balance" class="control-btn toggle-btn neat-btn" data-mode="evotorch_balance">
               🧬 EvoTorch
             </button>

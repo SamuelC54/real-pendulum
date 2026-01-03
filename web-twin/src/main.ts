@@ -276,23 +276,11 @@ function showUploadStatus(message: string, type: 'uploading' | 'success' | 'erro
 
 // Training progress display
 let trainingActive = false;
-let selectedTrainingType: 'swing-up' | 'balance' | 'sklearn' | 'evotorch' = 'swing-up';
-
-// Store genome info for both training types
-let bestGenomeSwingUp: any = null;
-let bestGenomeBalance: any = null;
+let selectedTrainingType: 'evotorch' = 'evotorch';
 
 function sendStartTraining() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    let type = 'START_TRAINING';
-    if (selectedTrainingType === 'balance') {
-      type = 'START_BALANCE_TRAINING';
-    } else if (selectedTrainingType === 'sklearn') {
-      type = 'START_SKLEARN_TRAINING';
-    } else if (selectedTrainingType === 'evotorch') {
-      type = 'START_EVOTORCH_TRAINING';
-    }
-    ws.send(JSON.stringify({ type }));
+    ws.send(JSON.stringify({ type: 'START_EVOTORCH_TRAINING' }));
   }
 }
 
@@ -302,82 +290,26 @@ function sendStopTraining() {
   }
 }
 
-function sendDeleteBest() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'DELETE_BEST', trainer: selectedTrainingType }));
-  }
-}
-
-function sendNeatConfig() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    const popSize = (document.getElementById('neat-pop-size') as HTMLInputElement)?.value || '100';
-    const maxSpeed = (document.getElementById('neat-max-speed') as HTMLInputElement)?.value || '9000';
-    const simSteps = (document.getElementById('neat-sim-steps') as HTMLInputElement)?.value || '2000';
-    
-    const config: any = {
-      type: 'NEAT_CONFIG',
-      trainer: selectedTrainingType,
-      pop_size: parseInt(popSize),
-      max_speed: parseInt(maxSpeed),
-      sim_steps: parseInt(simSteps)
-    };
-    
-    // Add perturbation parameters for balance trainer
-    if (selectedTrainingType === 'balance') {
-      const anglePert = (document.getElementById('neat-angle-perturbation') as HTMLInputElement)?.value;
-      const velPert = (document.getElementById('neat-velocity-perturbation') as HTMLInputElement)?.value;
-      if (anglePert) config.angle_perturbation = parseFloat(anglePert);
-      if (velPert) config.velocity_perturbation = parseFloat(velPert);
-    }
-    
-    ws.send(JSON.stringify(config));
-  }
-}
 
 // Tab switching
 function setupTabs() {
   const tabs = document.querySelectorAll('.neat-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const tabType = tab.getAttribute('data-tab') as 'swing-up' | 'balance' | 'sklearn' | 'evotorch';
+      const tabType = tab.getAttribute('data-tab') as 'evotorch';
       if (tabType) {
         selectedTrainingType = tabType;
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         
         // Show/hide content sections
-        const neatContent = document.getElementById('neat-training-content');
-        const sklearnContent = document.getElementById('sklearn-training-content');
         const evotorchContent = document.getElementById('evotorch-training-content');
-        if (neatContent) {
-          neatContent.style.display = (tabType === 'swing-up' || tabType === 'balance') ? 'block' : 'none';
-        }
-        if (sklearnContent) {
-          sklearnContent.style.display = tabType === 'sklearn' ? 'block' : 'none';
-        }
         if (evotorchContent) {
-          evotorchContent.style.display = tabType === 'evotorch' ? 'block' : 'none';
+          evotorchContent.style.display = 'block';
           // Request generation history when tab is selected
-          if (tabType === 'evotorch' && ws && ws.readyState === WebSocket.OPEN) {
+          if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'GET_EVOTORCH_GENERATIONS' }));
           }
-        }
-        
-        // Show/hide balance-specific perturbation config
-        const pertConfig = document.getElementById('balance-perturbation-config');
-        if (pertConfig) {
-          pertConfig.style.display = tabType === 'balance' ? 'block' : 'none';
-        }
-        
-        // Update best genome display for the selected tab (only for NEAT)
-        if (tabType !== 'sklearn') {
-          const currentGenome = tabType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
-          updateBestGenomeDisplay(currentGenome);
-        }
-        
-        // Request config for this trainer type
-        if (ws && ws.readyState === WebSocket.OPEN && tabType !== 'sklearn') {
-          ws.send(JSON.stringify({ type: 'GET_NEAT_CONFIG', trainer: tabType }));
         }
       }
     });
@@ -385,70 +317,6 @@ function setupTabs() {
 }
 
 setupTabs();
-
-function updateBestGenomeDisplay(genome: any) {
-  const fitnessEl = document.getElementById('genome-fitness');
-  const nodesEl = document.getElementById('genome-nodes');
-  const connectionsEl = document.getElementById('genome-connections');
-  const savedAtEl = document.getElementById('genome-saved-at');
-  
-  if (genome) {
-    if (container) container.classList.remove('no-genome');
-    if (fitnessEl) fitnessEl.textContent = genome.fitness?.toFixed(1) || '-';
-    if (nodesEl) nodesEl.textContent = genome.nodes?.toString() || '-';
-    if (connectionsEl) connectionsEl.textContent = genome.connections?.toString() || '-';
-    if (savedAtEl) savedAtEl.textContent = genome.saved_at || '-';
-  } else {
-    if (container) container.classList.add('no-genome');
-    if (fitnessEl) fitnessEl.textContent = '-';
-    if (nodesEl) nodesEl.textContent = '-';
-    if (connectionsEl) connectionsEl.textContent = '-';
-    if (savedAtEl) savedAtEl.textContent = '-';
-  }
-}
-
-let neatConfigLoaded = false;
-let lastLoadedTrainer: string | null = null;
-
-function updateNeatConfigDisplay(config: any) {
-  if (!config) return;
-  
-  // Allow updating if switching to a different trainer type
-  if (neatConfigLoaded && lastLoadedTrainer === selectedTrainingType) {
-    return;
-  }
-  
-  const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
-  const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
-  const simStepsEl = document.getElementById('neat-sim-steps') as HTMLInputElement;
-  
-  if (popSizeEl && config.pop_size !== undefined) {
-    popSizeEl.value = config.pop_size.toString();
-  }
-  if (maxSpeedEl && config.max_speed !== undefined) {
-    maxSpeedEl.value = config.max_speed.toString();
-  }
-  if (simStepsEl && config.sim_steps !== undefined) {
-    simStepsEl.value = config.sim_steps.toString();
-  }
-  
-  // Update perturbation parameters for balance trainer
-  if (selectedTrainingType === 'balance') {
-    const anglePertEl = document.getElementById('neat-angle-perturbation') as HTMLInputElement;
-    const velPertEl = document.getElementById('neat-velocity-perturbation') as HTMLInputElement;
-    
-    if (anglePertEl && config.angle_perturbation !== undefined) {
-      anglePertEl.value = config.angle_perturbation.toString();
-    }
-    if (velPertEl && config.velocity_perturbation !== undefined) {
-      velPertEl.value = config.velocity_perturbation.toString();
-    }
-  }
-  
-  // Track that we've loaded config for this trainer type
-  neatConfigLoaded = true;
-  lastLoadedTrainer = selectedTrainingType;
-}
 
 function updateTrainingDisplay(data: any) {
   // Show training is active
@@ -459,81 +327,9 @@ function updateTrainingDisplay(data: any) {
   if (stopBtn) stopBtn.style.display = 'block';
   
   // Update based on training type
-  if (data.trainer === 'sklearn' || selectedTrainingType === 'sklearn') {
-    updateSklearnTrainingDisplay(data);
-    return;
-  }
-  
   if (data.trainer === 'evotorch' || selectedTrainingType === 'evotorch') {
     updateEvotorchTrainingDisplay(data);
     return;
-  }
-  
-  // Update stats for NEAT
-  const genEl = document.getElementById('train-generation');
-  const bestEl = document.getElementById('train-best-fitness');
-  const avgEl = document.getElementById('train-avg-fitness');
-  const speciesEl = document.getElementById('train-species');
-  const popEl = document.getElementById('train-population');
-  
-  if (genEl) genEl.textContent = data.generation?.toString() || '0';
-  if (bestEl) bestEl.textContent = data.best_fitness?.toFixed(1) || '0';
-  if (avgEl) avgEl.textContent = data.avg_fitness?.toFixed(1) || '0';
-  if (speciesEl) speciesEl.textContent = data.species_count?.toString() || '0';
-  if (popEl) popEl.textContent = data.population_size?.toString() || '0';
-  
-  // Update best genome display if new best was saved
-  if (data.best_genome) {
-    // Store in the correct variable based on selected training type
-    if (selectedTrainingType === 'swing-up') {
-      bestGenomeSwingUp = data.best_genome;
-    } else {
-      bestGenomeBalance = data.best_genome;
-    }
-    updateBestGenomeDisplay(data.best_genome);
-  }
-  
-  // Draw fitness graph
-  const canvas = document.getElementById('fitness-canvas') as HTMLCanvasElement;
-  if (canvas && data.fitness_history && data.fitness_history.length > 0) {
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      const w = canvas.width;
-      const h = canvas.height;
-      
-      // Clear
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.fillRect(0, 0, w, h);
-      
-      // Find min/max for scaling
-      const history = data.fitness_history;
-      const maxFit = Math.max(...history, 1);
-      const minFit = Math.min(...history, 0);
-      const range = maxFit - minFit || 1;
-      
-      // Draw line
-      ctx.strokeStyle = '#c864ff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      
-      for (let i = 0; i < history.length; i++) {
-        const x = (i / (history.length - 1 || 1)) * w;
-        const y = h - ((history[i] - minFit) / range) * h * 0.9 - h * 0.05;
-        
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.stroke();
-      
-      // Draw current value
-      ctx.fillStyle = '#c864ff';
-      ctx.font = '10px monospace';
-      ctx.fillText(`${maxFit.toFixed(0)}`, 2, 12);
-      ctx.fillText(`${minFit.toFixed(0)}`, 2, h - 2);
-    }
   }
 }
 
@@ -574,35 +370,6 @@ if (stopTrainingBtn) {
   });
 }
 
-// Delete best button
-const deleteBestBtn = document.getElementById('btn-delete-best');
-if (deleteBestBtn) {
-  deleteBestBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      sendDeleteBest();
-    }
-  });
-}
-
-// Apply NEAT config button
-const applyNeatConfigBtn = document.getElementById('btn-apply-neat-config');
-if (applyNeatConfigBtn) {
-  applyNeatConfigBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      sendNeatConfig();
-    }
-  });
-}
-
-// Apply Sklearn config button
-const applySklearnConfigBtn = document.getElementById('btn-apply-sklearn-config');
-if (applySklearnConfigBtn) {
-  applySklearnConfigBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      sendSklearnConfig();
-    }
-  });
-}
 
 const applyEvotorchConfigBtn = document.getElementById('btn-apply-evotorch-config');
 if (applyEvotorchConfigBtn) {
@@ -953,40 +720,6 @@ function updatePopulationFrame() {
 (window as any).viewEvotorchGenerationRecordings = viewEvotorchGenerationRecordings;
 (window as any).viewEvotorchPopulationRecording = viewEvotorchPopulationRecording;
 
-function updateSklearnTrainingDisplay(data: any) {
-  const episodeEl = document.getElementById('sklearn-episode');
-  const bestRewardEl = document.getElementById('sklearn-best-reward');
-  const lastRewardEl = document.getElementById('sklearn-last-reward');
-  const explorationEl = document.getElementById('sklearn-exploration');
-  
-  if (episodeEl && data.episode !== undefined) {
-    episodeEl.textContent = data.episode.toString();
-  }
-  if (bestRewardEl && data.best_reward !== undefined) {
-    bestRewardEl.textContent = data.best_reward.toFixed(1);
-  }
-  if (lastRewardEl && data.last_reward !== undefined) {
-    lastRewardEl.textContent = data.last_reward.toFixed(1);
-  }
-  if (explorationEl && data.exploration_rate !== undefined) {
-    explorationEl.textContent = data.exploration_rate.toFixed(3);
-  }
-}
-
-function sendSklearnConfig() {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    const episodes = (document.getElementById('sklearn-episodes') as HTMLInputElement)?.value || '1000';
-    const maxSpeed = (document.getElementById('sklearn-max-speed') as HTMLInputElement)?.value || '9000';
-    const simSteps = (document.getElementById('sklearn-sim-steps') as HTMLInputElement)?.value || '5000';
-    
-    ws.send(JSON.stringify({
-      type: 'SKLEARN_CONFIG',
-      episodes: parseInt(episodes),
-      max_speed: parseInt(maxSpeed),
-      sim_steps: parseInt(simSteps)
-    }));
-  }
-}
 
 function updateModeDisplay(mode: string) {
   currentMode = mode;
@@ -1101,19 +834,6 @@ function connect() {
             }
           }
           
-          // Store genome info for both training types
-          if (data.best_genome_swing_up !== undefined) {
-            bestGenomeSwingUp = data.best_genome_swing_up;
-          }
-          if (data.best_genome_balance !== undefined) {
-            bestGenomeBalance = data.best_genome_balance;
-          }
-          // Display the genome for the selected tab
-          const currentGenome = selectedTrainingType === 'swing-up' ? bestGenomeSwingUp : bestGenomeBalance;
-          updateBestGenomeDisplay(currentGenome);
-          
-          // Update NEAT config inputs (once on first connection)
-          updateNeatConfigDisplay(data.neat_config);
         }
         
         // Handle upload status messages
@@ -1132,17 +852,6 @@ function connect() {
           }
         }
         
-        if (data.type === 'DELETE_RESULT') {
-          if (data.success) {
-            // Clear the genome for the selected tab
-            if (selectedTrainingType === 'swing-up') {
-              bestGenomeSwingUp = null;
-            } else {
-              bestGenomeBalance = null;
-            }
-            updateBestGenomeDisplay(null);
-          }
-        }
         
         // Handle training progress
         if (data.type === 'TRAINING') {
@@ -1194,17 +903,6 @@ function connect() {
           }
         }
         
-        if (data.type === 'NEAT_CONFIG_DATA') {
-          // Update config inputs with data for selected trainer
-          const popSizeEl = document.getElementById('neat-pop-size') as HTMLInputElement;
-          const maxSpeedEl = document.getElementById('neat-max-speed') as HTMLInputElement;
-          const simStepsEl = document.getElementById('neat-sim-steps') as HTMLInputElement;
-          
-          if (popSizeEl && data.pop_size) popSizeEl.value = data.pop_size.toString();
-          if (maxSpeedEl && data.max_speed) maxSpeedEl.value = data.max_speed.toString();
-          if (simStepsEl && data.sim_steps) simStepsEl.value = data.sim_steps.toString();
-        }
-        
       } catch (e) {
         console.error('Failed to parse message:', e);
       }
@@ -1216,7 +914,6 @@ function connect() {
       container.classList.remove('connected');
       container.classList.add('disconnected');
       if (loadingSpinnerEl) loadingSpinnerEl.classList.remove('hidden');
-      neatConfigLoaded = false;  // Reset so config reloads on reconnect
       scheduleReconnect();
     };
     
