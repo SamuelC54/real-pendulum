@@ -9,10 +9,20 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   },
   "dependencies": {
-    "two.js": "^0.8.23"
+    "jotai": "^2.16.1",
+    "konva": "^9.3.22",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-konva": "^18.2.14"
   }
 }

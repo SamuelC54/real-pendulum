@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply m-0 p-0 box-border;
+  }
+
+  html, body {
+    @apply h-full w-full overflow-hidden;
+  }
+
+  body {
+    @apply font-sans bg-bg-dark text-text-primary;
+  }
+
+  #root {
+    @apply flex h-full w-full;
+    background: 
+      radial-gradient(ellipse at 50% 0%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 80%, rgba(255, 0, 170, 0.05) 0%, transparent 40%),
+      theme('colors.bg-dark');
+  }
+}
+
