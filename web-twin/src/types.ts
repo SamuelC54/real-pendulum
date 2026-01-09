@@ -15,6 +15,11 @@ export interface ControlConfig {
   manualAccel: number
   oscillateSpeed: number
   oscillatePeriod: number
+  lqrQAngle: number
+  lqrQAngleVel: number
+  lqrQPosition: number
+  lqrQVelocity: number
+  lqrRControl: number
 }
 
 export interface TrainingStats {

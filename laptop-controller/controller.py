@@ -32,7 +32,11 @@ from typing import Optional
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-from control import lqr
+from lqr_controller import (
+    compute_lqr_gain,
+    compute_lqr_control,
+    reset_lqr_gain as reset_lqr_gain_module
+)
 
 # Check for simulator mode
 SIMULATOR_MODE = "--sim" in sys.argv or "-s" in sys.argv
@@ -75,6 +79,8 @@ class PendulumState:
     limit_left_pos: int = 0        # Position at left limit
     limit_right_pos: int = 0       # Position at right limit
     home_speed: int = 2000         # Speed for homing
+    # LQR state
+    lqr_position_integral: float = 0.0  # Integral of position error (for LQI)
 
 @dataclass
 class ControlConfig:
@@ -85,6 +91,14 @@ class ControlConfig:
     # Oscillate mode
     oscillate_speed: int = 3000
     oscillate_period: float = 2.0  # seconds per cycle
+    
+    # LQR mode (tuned via test_lqr_tuning.py - best survival: 6.74s)
+    lqr_q_angle: float = 20.0      # Q matrix: normalized angle penalty (optimized via tuning)
+    lqr_q_angle_vel: float = 2.0  # Q matrix: normalized angular velocity penalty (optimized via tuning)
+    lqr_q_position: float = 100.0  # Q matrix: normalized position penalty (optimized via tuning)
+    lqr_q_velocity: float = 0.2    # Q matrix: normalized velocity penalty
+    lqr_q_integral: float = 10.0   # Q matrix: position integral penalty (for LQI)
+    lqr_r_control: float = 5.0     # R matrix: control effort penalty (optimized via tuning)
     
 
 # Global state
@@ -489,52 +503,10 @@ def compute_evotorch_balance() -> int:
     # Return acceleration (will be handled by send_acceleration)
     return int(acceleration)
 
-# LQR Controller
-_lqr_gain = None
-_lqr_gain_computed = False
-
+# LQR Controller - functions are now in lqr_controller module
 def reset_lqr_gain():
     """Reset LQR gain to force recomputation (useful after parameter changes)"""
-    global _lqr_gain, _lqr_gain_computed
-    _lqr_gain = None
-    _lqr_gain_computed = False
-
-def compute_lqr_gain():
-    """Compute LQR gain matrix using control library
-    
-    Linearizes around upright equilibrium (θ = π).
-    State: [θ - π, θ_dot, x_normalized, x_dot_normalized]
-    """
-    global _lqr_gain, _lqr_gain_computed
-    
-    if _lqr_gain_computed:
-        return _lqr_gain
-    
-    # System parameters
-    L, g, c = 0.3, 9.81, 0.2  # length (m), gravity (m/s²), damping
-    
-    # Linearized state-space matrices around upright (θ = π)
-    A = np.array([
-        [0, 1, 0, 0],
-        [g / L, -c, 0, 0],
-        [0, 0, 0, 1],
-        [0, 0, 0, 0]
-    ])
-    B = np.array([[0], [1 / L], [0], [1]])
-    
-    # Cost matrices: Q penalizes state deviations, R penalizes control effort
-    # Increased position penalty significantly to keep cart centered
-    Q = np.diag([20.0, 2.0, 50.0, 0.2])  # [angle, angle_vel, position, velocity]
-    R = np.array([[5.0]])
-    
-    # Compute LQR gain
-    K, _, _ = lqr(A, B, Q, R)
-    K = K[0] if K.ndim == 2 else K  # Flatten to 1D
-    
-    _lqr_gain = K
-    _lqr_gain_computed = True
-    print(f"LQR gain: K = {K}", flush=True)
-    return K
+    reset_lqr_gain_module()
 
 def compute_lqr_balance() -> int:
     """Use LQR (Linear Quadratic Regulator) to balance the pendulum
@@ -544,104 +516,56 @@ def compute_lqr_balance() -> int:
     - State vector: [θ - π, θ_dot, x, x_dot] (deviation from equilibrium)
     - Control: cart acceleration
     """
-    K = compute_lqr_gain()
+    # Get LQR gain using config parameters
+    # Use physics parameters from simulator config if available, otherwise defaults
+    # This ensures LQR model matches the actual physics
+    from simulator import SimulatorConfig
+    sim_config = SimulatorConfig()  # Get default config values
+    
+    K = compute_lqr_gain(
+        q_angle=config.lqr_q_angle,
+        q_angle_vel=config.lqr_q_angle_vel,
+        q_position=config.lqr_q_position,
+        q_velocity=config.lqr_q_velocity,
+        q_integral=getattr(config, 'lqr_q_integral', 10.0),  # Default integral weight
+        r_control=config.lqr_r_control,
+        cart_mass=sim_config.cart_mass,
+        pendulum_mass=sim_config.pendulum_mass,
+        pendulum_length=sim_config.pendulum_length,
+        gravity=sim_config.gravity,
+        damping=sim_config.damping,
+        cart_friction=sim_config.cart_friction,
+        max_angular_vel=10.0,  # rad/s for normalization
+        use_lqi=True,  # Use LQI for integral action
+        use_cache=True
+    )
+    
     if K is None:
         print("LQR gain not available, going to idle", flush=True)
         state.mode = "idle"
         return 0
     
-    # Get current state
-    # System convention: 0° = DOWN (stable), 180° = UP (inverted/unstable)
-    # LQR is linearized around 180° (π) as upright equilibrium
-    angle_rad = math.radians(state.angle)
-    # Normalize angle to [0, 2π) and compute deviation from upright (π)
-    angle_rad = angle_rad % (2 * math.pi)
-    angle_deviation = angle_rad - math.pi  # Deviation from upright (π)
+    # Use LQR controller module with improved architecture
+    # Initialize position integral if not already set
+    if not hasattr(state, 'lqr_position_integral'):
+        state.lqr_position_integral = 0.0
     
-    # Wrap angle deviation to [-π, π] for better control near boundaries
-    if angle_deviation > math.pi:
-        angle_deviation -= 2 * math.pi
-    elif angle_deviation < -math.pi:
-        angle_deviation += 2 * math.pi
+    acceleration_steps, at_limit, new_integral = compute_lqr_control(
+        angle_deg=state.angle,
+        angular_velocity_deg_s=state.angular_velocity,
+        position=state.position,
+        velocity=state.velocity,
+        limit_left_pos=state.limit_left_pos,
+        limit_right_pos=state.limit_right_pos,
+        K=K,
+        max_accel=sim_config.motor_accel,  # Use simulator's motor acceleration limit
+        use_lqi=True,  # Use LQI for integral action
+        position_integral=state.lqr_position_integral,
+        dt=1.0 / 100.0,  # Control rate is 100Hz
+    )
     
-    # Angular velocity in rad/s
-    angular_vel_rad = math.radians(state.angular_velocity)
-    
-    # Get rail length for position normalization (similar to EvoTorch)
-    rail_length = state.limit_right_pos - state.limit_left_pos
-    if rail_length <= 0:
-        # Fallback if limits not set yet (use default 7500 steps)
-        rail_length = 7500
-    rail_half = rail_length / 2
-    
-    # Calculate center position (where we want to stay)
-    center_pos = (state.limit_left_pos + state.limit_right_pos) / 2
-    
-    # Position deviation from center (positive = right of center, negative = left of center)
-    position_from_center = state.position - center_pos
-    
-    # Normalize by rail half-length (so -1 = left limit, 0 = center, +1 = right limit)
-    cart_pos_normalized = position_from_center / rail_half if rail_half > 0 else 0.0
-    
-    # Normalize velocity by max speed (similar to EvoTorch)
-    MAX_SPEED = 20000  # steps/s (matches EvoTorch)
-    cart_vel_normalized = state.velocity / MAX_SPEED if MAX_SPEED > 0 else 0.0
-    
-    # State vector: [θ - π, θ_dot, x_normalized, x_dot_normalized]
-    # Position and velocity are normalized to be scale-invariant
-    # Note: Negate position so that positive position (right of center) 
-    #       results in negative control (move left toward center)
-    x = np.array([
-        angle_deviation,           # rad (deviation from π)
-        angular_vel_rad,           # rad/s
-        -cart_pos_normalized,      # Negated: so positive = right of center -> negative control
-        cart_vel_normalized        # normalized by MAX_SPEED (dimensionless)
-    ])
-    
-    # LQR control law: u = -K * x (standard form)
-    # But we need correct direction: if pendulum falls right (θ > π, so x[0] > 0),
-    # we want cart to move right (positive acceleration)
-    # With standard u = -K*x, if K[0] > 0 and x[0] > 0, then u < 0 (wrong!)
-    # So we flip the sign: u = +K * x
-    u = K @ x  # Flipped sign to get correct control direction
-    u_normalized = u[0] if u.ndim > 0 else float(u)  # Extract scalar
-    
-    # Convert normalized acceleration to steps/s²
-    # The normalized acceleration needs to be scaled to physical units
-    # Use a reasonable max acceleration for normalization
-    # Since position is normalized by rail_half_m and velocity by MAX_SPEED_ms,
-    # we scale acceleration by a similar factor
-    steps_per_meter = 20000
-    MAX_ACCEL_ms2 = 5.0  # m/s² (100000 steps/s² / 20000)
-    acceleration_ms2 = u_normalized * MAX_ACCEL_ms2
-    acceleration_steps = acceleration_ms2 * steps_per_meter
-    
-    # Apply very conservative limits to prevent hitting walls
-    # Use a much lower max acceleration for LQR to be very safe
-    MAX_ACCEL = 100000  # steps/s² (reduced significantly for safety)
-    acceleration_steps = max(-MAX_ACCEL, min(MAX_ACCEL, acceleration_steps))
-    
-    # Add aggressive soft limits based on position to slow down near walls
-    rail_length = state.limit_right_pos - state.limit_left_pos
-    if rail_length > 0:
-        # Normalize position to [-1, 1] range
-        pos_normalized = 2.0 * (state.position - state.limit_left_pos) / rail_length - 1.0
-        
-        # Soft limit: start reducing acceleration when within 30% of limits
-        # More aggressive reduction as we approach walls
-        if abs(pos_normalized) > 0.5:  # Within 25% of limits (50% of rail from center)
-            # Calculate how close we are to the limit (0.0 = at 50%, 1.0 = at limit)
-            distance_from_center = abs(pos_normalized) - 0.5
-            # Reduce acceleration progressively: 50% at 0.5, 0% at 1.0
-            reduction_factor = 1.0 - distance_from_center * 2.0  # Linear reduction
-            reduction_factor = max(0.0, min(1.0, reduction_factor))  # Clamp to [0, 1]
-            acceleration_steps *= reduction_factor
-            
-            # Also add a velocity-dependent reduction near limits
-            # If moving toward the wall, reduce acceleration more
-            if (pos_normalized > 0 and acceleration_steps > 0) or (pos_normalized < 0 and acceleration_steps < 0):
-                # Moving toward wall - reduce by additional 50%
-                acceleration_steps *= 0.5
+    # Update position integral for next iteration
+    state.lqr_position_integral = new_integral
     
     # Hard limits - stop if at wall
     if state.limit_left and acceleration_steps < 0:
@@ -649,7 +573,7 @@ def compute_lqr_balance() -> int:
     if state.limit_right and acceleration_steps > 0:
         acceleration_steps = 0
     
-    return int(acceleration_steps)
+    return acceleration_steps
 
 def compute_homing() -> int:
     """
@@ -1124,10 +1048,32 @@ async def handle_command(message: str, websocket=None):
                     serial_port.set_pendulum_upright()
                     print(f"Simulator: Reset pendulum to upright (180°) for {new_mode}")
                 
-                # Reset LQR gain when entering LQR mode to force recomputation
+                # Reset LQR gain and integral when entering LQR mode
                 if new_mode == "lqr_balance":
                     reset_lqr_gain()
-                    print("LQR: Resetting gain cache, will recompute on first use", flush=True)
+                    state.lqr_position_integral = 0.0  # Reset integral
+                    print("LQR: Resetting gain cache and position integral, will recompute on first use", flush=True)
+                    
+                    # Center cart and zero velocity when entering LQR mode
+                    if SIMULATOR_MODE and isinstance(serial_port, PendulumSimulator):
+                        # Calculate center position
+                        if state.limit_left_pos != 0 or state.limit_right_pos != 0:
+                            center_pos = (state.limit_left_pos + state.limit_right_pos) / 2
+                        else:
+                            # Use default rail length if limits not set
+                            center_pos = 0.0
+                        
+                        # Set cart to center with zero velocity
+                        serial_port.set_state(cart_position=center_pos, cart_velocity=0.0)
+                        # Also update state immediately
+                        state.position = int(center_pos)
+                        state.velocity = 0
+                        print(f"LQR: Cart centered at position {int(center_pos)}, velocity set to 0", flush=True)
+                    else:
+                        # For real hardware, stop the cart (it will need to be manually centered)
+                        send_stop()
+                        state.velocity = 0
+                        print("LQR: Cart stopped (real hardware - please center manually)", flush=True)
                 
                 state.mode = new_mode
                 print(f"Mode changed to: {new_mode}")
@@ -1156,6 +1102,22 @@ async def handle_command(message: str, websocket=None):
                 config.oscillate_speed = int(cmd["oscillate_speed"])
             if "oscillate_period" in cmd:
                 config.oscillate_period = float(cmd["oscillate_period"])
+            # LQR config
+            if "lqr_q_angle" in cmd:
+                config.lqr_q_angle = float(cmd["lqr_q_angle"])
+                reset_lqr_gain()  # Reset gain cache when Q/R changes
+            if "lqr_q_angle_vel" in cmd:
+                config.lqr_q_angle_vel = float(cmd["lqr_q_angle_vel"])
+                reset_lqr_gain()
+            if "lqr_q_position" in cmd:
+                config.lqr_q_position = float(cmd["lqr_q_position"])
+                reset_lqr_gain()
+            if "lqr_q_velocity" in cmd:
+                config.lqr_q_velocity = float(cmd["lqr_q_velocity"])
+                reset_lqr_gain()
+            if "lqr_r_control" in cmd:
+                config.lqr_r_control = float(cmd["lqr_r_control"])
+                reset_lqr_gain()
             if "swingup_kp" in cmd:
                 config.swingup_kp = float(cmd["swingup_kp"])
             if "swingup_max_speed" in cmd:
@@ -1237,7 +1199,12 @@ async def broadcast_state():
             "manual_speed": config.manual_speed,
             "manual_accel": config.manual_accel,
             "oscillate_speed": config.oscillate_speed,
-            "oscillate_period": config.oscillate_period
+            "oscillate_period": config.oscillate_period,
+            "lqr_q_angle": config.lqr_q_angle,
+            "lqr_q_angle_vel": config.lqr_q_angle_vel,
+            "lqr_q_position": config.lqr_q_position,
+            "lqr_q_velocity": config.lqr_q_velocity,
+            "lqr_r_control": config.lqr_r_control
         }
     })
     

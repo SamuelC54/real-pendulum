@@ -17,6 +17,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 import io
+from physics import compute_coupled_dynamics
 
 
 @dataclass
@@ -24,8 +25,9 @@ class SimulatorConfig:
     """Configuration for the simulator"""
     # Rail/Cart parameters
     rail_length_steps: int = 7500        # Total rail length in steps
-    cart_mass: float = 0.5               # kg
+    cart_mass: float = 1000               # kg
     motor_accel: float = 500000           # steps/s² acceleration limit
+    cart_friction: float = 0.1           # Cart friction coefficient (N·s/m)
     
     # Pendulum parameters  
     pendulum_length: float = 0.3         # meters
@@ -109,27 +111,68 @@ class PendulumSimulator:
             time.sleep(0.0005)
     
     def _update_physics(self, dt: float):
-        """Update physics simulation for one timestep"""
+        """Update physics simulation using full dynamic equations
+        
+        Implements coupled cart-pendulum dynamics.
+        Note: Standard equations assume θ=0 is UP, but our convention is θ=0 is DOWN.
+        So we need to adjust the gravity term sign.
+        
+        Standard form (θ=0 is UP):
+        - Cart: M*x'' = F - m*L*θ''*cos(θ) + m*L*θ'²*sin(θ) - b*x'
+        - Pendulum: (m*L²)*θ'' = m*g*L*sin(θ) - m*L*x''*cos(θ) - c*θ'
+        
+        Our convention: θ=0 is DOWN (stable), θ=π is UP (inverted/unstable)
+        Adjusted: θ'' = -(g/L)*sin(θ) - (x''/L)*cos(θ) - c*θ'
+        """
         # Clamp dt to prevent instability
         dt = min(dt, 0.01)
         
-        # --- Cart dynamics (acceleration-only control) ---
-        # Clamp acceleration to motor limits
-        target_accel = max(-self.config.motor_accel, min(self.config.motor_accel, self.target_acceleration))
+        # System parameters
+        M = self.config.cart_mass          # Cart mass (kg)
+        m = self.config.pendulum_mass      # Pendulum mass (kg)
+        L = self.config.pendulum_length    # Pendulum length (m)
+        g = self.config.gravity            # Gravity (m/s²)
+        c = self.config.damping            # Angular damping coefficient
+        b = self.config.cart_friction      # Cart friction coefficient
         
-        # Update velocity based on acceleration
-        self.cart_velocity += target_accel * dt
+        # Convert from steps to meters
+        steps_per_meter = 20000
+        cart_pos_m = self.cart_position / steps_per_meter
+        cart_vel_ms = self.cart_velocity / steps_per_meter
+        
+        # Clamp commanded acceleration to motor limits
+        target_accel_steps = max(-self.config.motor_accel, min(self.config.motor_accel, self.target_acceleration))
+        target_accel_ms2 = target_accel_steps / steps_per_meter
+        
+        # Compute coupled dynamics using physics module
+        cart_accel_ms2, angular_accel = compute_coupled_dynamics(
+            cart_mass=M,
+            pendulum_mass=m,
+            pendulum_length=L,
+            gravity=g,
+            damping=c,
+            cart_friction=b,
+            target_accel_ms2=target_accel_ms2,
+            cart_pos_m=cart_pos_m,
+            cart_vel_ms=cart_vel_ms,
+            pendulum_angle=self.pendulum_angle,
+            pendulum_velocity=self.pendulum_velocity,
+        )
+        
+        # Store accelerations
+        self.cart_acceleration = cart_accel_ms2 * steps_per_meter  # Convert back to steps/s²
+        
+        # Update cart state (in meters, then convert back)
+        cart_vel_ms += cart_accel_ms2 * dt
+        cart_pos_m += cart_vel_ms * dt
+        
+        # Convert back to steps
+        self.cart_velocity = cart_vel_ms * steps_per_meter
+        self.cart_position = cart_pos_m * steps_per_meter
         
         # Clamp velocity to max speed
-        max_speed = 50000  # Maximum cart speed (steps/s)
+        max_speed = 100000  # Maximum cart speed (steps/s) - increased for better performance
         self.cart_velocity = max(-max_speed, min(max_speed, self.cart_velocity))
-        
-        # Store actual cart acceleration (for pendulum coupling)
-        self.cart_acceleration = target_accel
-        
-        # Update cart position
-        old_position = self.cart_position
-        self.cart_position += self.cart_velocity * dt
         
         # Check limit switches
         limit_left = self.cart_position <= self.limit_left_pos
@@ -151,37 +194,10 @@ class PendulumSimulator:
             if self.target_acceleration > 0:
                 self.target_acceleration = 0
         
-        # --- Pendulum dynamics ---
-        # Convert cart acceleration from steps/s² to m/s²
-        # For belt drive: ~80000 steps/meter typical
-        # Lower value = stronger coupling (pendulum responds more to cart movement)
-        steps_per_meter = 20000  # Reduced for stronger pendulum response
-        cart_accel_ms2 = target_accel / steps_per_meter
-        
-        # Pendulum equation of motion:
-        # θ'' = -(g/L) * sin(θ) + (a_cart/L) * cos(θ) - c * θ'
-        # Convention: θ=0 is DOWN (stable), θ=180° is UP (inverted/unstable)
-        
-        L = self.config.pendulum_length
-        g = self.config.gravity
-        c = self.config.damping
-        
-        # Gravity torque (negative because 0° is stable equilibrium)
-        gravity_term = -(g / L) * math.sin(self.pendulum_angle)
-        
-        # Cart acceleration coupling (drives pendulum when cart moves)
-        coupling_term = (cart_accel_ms2 / L) * math.cos(self.pendulum_angle)
-        
-        # Damping
-        damping_term = c * self.pendulum_velocity
-        
-        # Angular acceleration
-        angular_accel = gravity_term + coupling_term - damping_term
-        self.pendulum_acceleration = angular_accel  # Store for get_state()
-        
-        # Update pendulum state (semi-implicit Euler)
+        # Update pendulum state
         self.pendulum_velocity += angular_accel * dt
         self.pendulum_angle += self.pendulum_velocity * dt
+        self.pendulum_acceleration = angular_accel
         
         # Normalize angle to [0, 2π)
         while self.pendulum_angle < 0:

@@ -12,6 +12,11 @@ import {
   manualAccelAtom,
   oscillateSpeedAtom,
   oscillatePeriodAtom,
+  lqrQAngleAtom,
+  lqrQAngleVelAtom,
+  lqrQPositionAtom,
+  lqrQVelocityAtom,
+  lqrRControlAtom,
   trainingActiveAtom,
   trainingStatsAtom,
   generationsAtom,
@@ -43,6 +48,11 @@ export const updateControlConfig = (data: any, set: any) => {
     if (data.config.manual_accel !== undefined) set(manualAccelAtom, data.config.manual_accel)
     if (data.config.oscillate_speed !== undefined) set(oscillateSpeedAtom, data.config.oscillate_speed)
     if (data.config.oscillate_period !== undefined) set(oscillatePeriodAtom, data.config.oscillate_period)
+    if (data.config.lqr_q_angle !== undefined) set(lqrQAngleAtom, data.config.lqr_q_angle)
+    if (data.config.lqr_q_angle_vel !== undefined) set(lqrQAngleVelAtom, data.config.lqr_q_angle_vel)
+    if (data.config.lqr_q_position !== undefined) set(lqrQPositionAtom, data.config.lqr_q_position)
+    if (data.config.lqr_q_velocity !== undefined) set(lqrQVelocityAtom, data.config.lqr_q_velocity)
+    if (data.config.lqr_r_control !== undefined) set(lqrRControlAtom, data.config.lqr_r_control)
   }
 }
 

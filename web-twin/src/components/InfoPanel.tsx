@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { getDefaultStore } from 'jotai'
-import { pendulumStateAtom, controlConfigAtom, websocketAtom, manualAccelAtom, oscillateSpeedAtom, oscillatePeriodAtom } from '../store/atoms'
+import { pendulumStateAtom, controlConfigAtom, websocketAtom, manualAccelAtom, oscillateSpeedAtom, oscillatePeriodAtom, lqrQAngleAtom, lqrQAngleVelAtom, lqrQPositionAtom, lqrQVelocityAtom, lqrRControlAtom } from '../store/atoms'
 import { useSendCommand } from '../store/hooks'
 
 export default function InfoPanel() {
@@ -12,6 +12,11 @@ export default function InfoPanel() {
   const setManualAccel = useSetAtom(manualAccelAtom)
   const setOscillateSpeed = useSetAtom(oscillateSpeedAtom)
   const setOscillatePeriod = useSetAtom(oscillatePeriodAtom)
+  const setLqrQAngle = useSetAtom(lqrQAngleAtom)
+  const setLqrQAngleVel = useSetAtom(lqrQAngleVelAtom)
+  const setLqrQPosition = useSetAtom(lqrQPositionAtom)
+  const setLqrQVelocity = useSetAtom(lqrQVelocityAtom)
+  const setLqrRControl = useSetAtom(lqrRControlAtom)
   const [uploadStatus, setUploadStatus] = useState<{ message: string; type: 'uploading' | 'success' | 'error' } | null>(null)
   const positionMarkerRef = useRef<HTMLDivElement>(null)
   const minPosition = state.limitLeftPos || -5000
@@ -76,7 +81,7 @@ export default function InfoPanel() {
     }
   }
 
-  const handleConfigChange = (key: 'manualAccel' | 'oscillateSpeed' | 'oscillatePeriod', value: number) => {
+  const handleConfigChange = (key: 'manualAccel' | 'oscillateSpeed' | 'oscillatePeriod' | 'lqrQAngle' | 'lqrQAngleVel' | 'lqrQPosition' | 'lqrQVelocity' | 'lqrRControl', value: number) => {
     if (key === 'manualAccel') {
       setManualAccel(value)
       sendCommand({ type: 'CONFIG', manual_accel: value })
@@ -86,6 +91,21 @@ export default function InfoPanel() {
     } else if (key === 'oscillatePeriod') {
       setOscillatePeriod(value)
       sendCommand({ type: 'CONFIG', oscillate_period: value })
+    } else if (key === 'lqrQAngle') {
+      setLqrQAngle(value)
+      sendCommand({ type: 'CONFIG', lqr_q_angle: value })
+    } else if (key === 'lqrQAngleVel') {
+      setLqrQAngleVel(value)
+      sendCommand({ type: 'CONFIG', lqr_q_angle_vel: value })
+    } else if (key === 'lqrQPosition') {
+      setLqrQPosition(value)
+      sendCommand({ type: 'CONFIG', lqr_q_position: value })
+    } else if (key === 'lqrQVelocity') {
+      setLqrQVelocity(value)
+      sendCommand({ type: 'CONFIG', lqr_q_velocity: value })
+    } else if (key === 'lqrRControl') {
+      setLqrRControl(value)
+      sendCommand({ type: 'CONFIG', lqr_r_control: value })
     }
   }
 
@@ -310,6 +330,85 @@ export default function InfoPanel() {
             />
             <span className="font-mono text-xs text-accent-cyan w-[50px] text-right flex-shrink-0">
               {config.oscillatePeriod.toFixed(1)}
+            </span>
+          </div>
+        </div>
+
+        <div className="p-2.5 bg-white/2 rounded-lg border border-white/5">
+          <h3 className="text-xs font-semibold text-blue-400 uppercase tracking-wide mb-1.5">LQR Mode</h3>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-text-dim w-[55px] flex-shrink-0">Q Angle</label>
+            <input
+              type="range"
+              min="1"
+              max="100"
+              step="1"
+              value={config.lqrQAngle}
+              onChange={(e) => handleConfigChange('lqrQAngle', parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-blue-400"
+            />
+            <span className="font-mono text-xs text-blue-400 w-[50px] text-right flex-shrink-0">
+              {config.lqrQAngle.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-text-dim w-[55px] flex-shrink-0">Q Ang Vel</label>
+            <input
+              type="range"
+              min="0.1"
+              max="10"
+              step="0.1"
+              value={config.lqrQAngleVel}
+              onChange={(e) => handleConfigChange('lqrQAngleVel', parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-blue-400"
+            />
+            <span className="font-mono text-xs text-blue-400 w-[50px] text-right flex-shrink-0">
+              {config.lqrQAngleVel.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-text-dim w-[55px] flex-shrink-0">Q Position</label>
+            <input
+              type="range"
+              min="1"
+              max="200"
+              step="1"
+              value={config.lqrQPosition}
+              onChange={(e) => handleConfigChange('lqrQPosition', parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-blue-400"
+            />
+            <span className="font-mono text-xs text-blue-400 w-[50px] text-right flex-shrink-0">
+              {config.lqrQPosition.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-text-dim w-[55px] flex-shrink-0">Q Velocity</label>
+            <input
+              type="range"
+              min="0.1"
+              max="5"
+              step="0.1"
+              value={config.lqrQVelocity}
+              onChange={(e) => handleConfigChange('lqrQVelocity', parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-blue-400"
+            />
+            <span className="font-mono text-xs text-blue-400 w-[50px] text-right flex-shrink-0">
+              {config.lqrQVelocity.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-text-dim w-[55px] flex-shrink-0">R Control</label>
+            <input
+              type="range"
+              min="0.5"
+              max="20"
+              step="0.5"
+              value={config.lqrRControl}
+              onChange={(e) => handleConfigChange('lqrRControl', parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-white/10 rounded appearance-none cursor-pointer accent-blue-400"
+            />
+            <span className="font-mono text-xs text-blue-400 w-[50px] text-right flex-shrink-0">
+              {config.lqrRControl.toFixed(1)}
             </span>
           </div>
         </div>

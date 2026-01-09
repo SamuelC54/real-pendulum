@@ -31,12 +31,22 @@ export const pendulumStateAtom = atom((get) => ({
 export const manualAccelAtom = atom(50000)
 export const oscillateSpeedAtom = atom(3000)
 export const oscillatePeriodAtom = atom(2.0)
+export const lqrQAngleAtom = atom(20.0) // Optimized via tuning
+export const lqrQAngleVelAtom = atom(2.0) // Optimized via tuning
+export const lqrQPositionAtom = atom(100.0) // Optimized via tuning
+export const lqrQVelocityAtom = atom(0.2)
+export const lqrRControlAtom = atom(5.0) // Optimized via tuning
 
 // Combined control config atom (read-only, computed from individual atoms)
 export const controlConfigAtom = atom((get) => ({
   manualAccel: get(manualAccelAtom),
   oscillateSpeed: get(oscillateSpeedAtom),
   oscillatePeriod: get(oscillatePeriodAtom),
+  lqrQAngle: get(lqrQAngleAtom),
+  lqrQAngleVel: get(lqrQAngleVelAtom),
+  lqrQPosition: get(lqrQPositionAtom),
+  lqrQVelocity: get(lqrQVelocityAtom),
+  lqrRControl: get(lqrRControlAtom),
 }))
 
 // Training state atoms
